@@ -1,0 +1,11 @@
+name = "crimson-stitcher"
+main = "workers/stitcher.js"
+compatibility_date = "2024-03-14"
+
+# Set this to your account ID if known, otherwise remove or let wrangler prompt you
+# account_id = "your-account-id"
+
+[vars]
+# These are public/unsecret variables. 
+FIREBASE_COLLECTION_NAME = "files"
+FIREBASE_PROJECT_ID = "crimson-67b0d"

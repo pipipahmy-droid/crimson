@@ -1,0 +1,103 @@
+name: Leech & Chunk
+
+on:
+  repository_dispatch:
+    types: [leech_command]
+
+jobs:
+  leech-and-upload:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Firebase Admin
+        run: npm install firebase-admin
+
+      - name: Download & Split File
+        id: process_file
+        run: |
+          DOWNLOAD_URL="${{ github.event.client_payload.download_url }}"
+          DOC_ID="${{ github.event.client_payload.doc_id }}"
+          
+          echo "Downloading from: $DOWNLOAD_URL"
+          
+          # Download file, following redirects
+          curl -L -o download.tmp "$DOWNLOAD_URL"
+          
+          # Get file size
+          TOTAL_SIZE=$(stat -c%s download.tmp)
+          echo "Total Size: $TOTAL_SIZE bytes"
+          echo "total_size=$TOTAL_SIZE" >> $GITHUB_OUTPUT
+          
+          # Try to determine filename from URL or payload
+          # We use the basename of URL as default or payload filename
+          FILENAME="${{ github.event.client_payload.filename }}"
+          if [ -z "$FILENAME" ]; then
+            FILENAME=$(basename "$DOWNLOAD_URL")
+          fi
+          # Fallback if filename is empty or invalid
+          if [ -z "$FILENAME" ] || [ "$FILENAME" == "/" ]; then
+            FILENAME="downloaded-file.bin"
+          fi
+          
+          # Sanitize filename to avoid weird chars
+          FILENAME=$(echo "$FILENAME" | sed 's/[^a-zA-Z0-9._-]/_/g')
+
+          echo "Filename: $FILENAME"
+          echo "filename=$FILENAME" >> $GITHUB_OUTPUT
+
+          # Split file into 1.9GB chunks with numeric suffixes (chunk_00, chunk_01...)
+          # 1900M = 1900 * 1024 * 1024 bytes
+          split -d -b 1900M download.tmp chunk_
+          
+          # List generated chunks
+          ls -l chunk_*
+
+      - name: Create Release & Upload Assets
+        id: create_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DOC_ID="${{ github.event.client_payload.doc_id }}"
+          FILENAME="${{ steps.process_file.outputs.filename }}"
+          TAG_NAME="leech-${DOC_ID}-$(date +%s)"
+          
+          echo "Creating release $TAG_NAME for $FILENAME..."
+          
+          # Create release and upload all chunk files
+          gh release create "$TAG_NAME" chunk_* \
+            --title "Leech: $FILENAME" \
+            --notes "Original URL: ${{ github.event.client_payload.download_url }}"
+          
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+
+      - name: Get Asset URLs & Update Firestore
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FIREBASE_COLLECTION_NAME: 'files'
+          DOC_ID: ${{ github.event.client_payload.doc_id }}
+          FILENAME: ${{ steps.process_file.outputs.filename }}
+          TOTAL_SIZE: ${{ steps.process_file.outputs.total_size }}
+          CHUNK_URLS_FILE: 'chunk_urls.txt'
+        run: |
+          TAG_NAME="${{ steps.create_release.outputs.tag_name }}"
+          
+          echo "Fetching asset URLs..."
+          # Fetch assets from release, sort by name to ensure order (chunk_00, chunk_01...), and extract URLs
+          gh release view "$TAG_NAME" --json assets --jq '.assets | sort_by(.name) | .[].url' > chunk_urls.txt
+          
+          echo "Found chunk URLs:"
+          cat chunk_urls.txt
+          
+          # Run the node script to update Firestore
+          echo "Updating Firestore..."
+          node scripts/update-firestore.js
