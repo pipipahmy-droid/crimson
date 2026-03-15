@@ -18,57 +18,125 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Firebase Admin
-        run: npm install firebase-admin
+      - name: Install Dependencies
+        run: |
+          npm install firebase-admin
+          sudo apt-get update
+          sudo apt-get install -y aria2
 
-      - name: Download & Split File
+      - name: Analyze & Start Download
         id: process_file
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          DOC_ID: ${{ github.event.client_payload.doc_id }}
         run: |
           DOWNLOAD_URL="${{ github.event.client_payload.download_url }}"
-          DOC_ID="${{ github.event.client_payload.doc_id }}"
           
-          echo "Downloading from: $DOWNLOAD_URL"
+          echo "Analyzing URL: $DOWNLOAD_URL"
           
-          # Download file, following redirects
-          curl -L -o download.tmp "$DOWNLOAD_URL"
+          # 1. Fetch headers to detect filename & size
+          curl -sI -L "$DOWNLOAD_URL" > headers.txt
+          cat headers.txt
           
+          # Extract Content-Length
+          TOTAL_SIZE=$(grep -i "content-length" headers.txt | awk '{print $2}' | tr -d '\r')
+          if [ -z "$TOTAL_SIZE" ]; then
+             TOTAL_SIZE=0
+          fi
+          echo "Early Total Size: $TOTAL_SIZE bytes"
+
+          # Extract filename from Content-Disposition
+          REMOTE_FILENAME=$(grep -i "content-disposition" headers.txt | grep -o 'filename[^;]*' | sed 's/[^=]*=//' | tr -d '"' | tr -d '\r' | head -n 1)
+
+          echo "Detected remote filename: $REMOTE_FILENAME"
+          
+          # Name Logic: Payload -> Remote Header -> URL Basename
+          FILENAME="${{ github.event.client_payload.filename }}"
+          
+          if [ -z "$FILENAME" ] && [ -n "$REMOTE_FILENAME" ]; then
+             FILENAME="$REMOTE_FILENAME"
+          fi
+          
+          if [ -z "$FILENAME" ]; then
+             # Remove query parameters first
+             CLEAN_URL=$(echo "$DOWNLOAD_URL" | cut -d'?' -f1)
+             FILENAME=$(basename "$CLEAN_URL")
+          fi
+          
+          # Advanced Sanitization: Remove garbage suffix like _ts_gAAAA...
+          # Strategy: If it looks like a known extension followed by junk, cut it
+          FILENAME=$(echo "$FILENAME" | sed -E 's/(\.zip|\.rar|\.7z|\.iso|\.mp4|\.mkv|\.avi|\.tar|\.gz|\.xz)[^a-zA-Z0-9]*.*$/\1/I')
+
+          # General sanitization for filesystem safety
+          # Allow A-Z, 0-9, . _ -
+          FILENAME=$(echo "$FILENAME" | sed 's/[^a-zA-Z0-9._-]/-/g')
+          
+          # Fallback
+          if [ -z "$FILENAME" ]; then
+             FILENAME="downloaded-file.bin"
+          fi
+          
+          echo "Final Sanitized Filename: $FILENAME"
+          echo "filename=$FILENAME" >> $GITHUB_OUTPUT
+          echo "total_size=$TOTAL_SIZE" >> $GITHUB_OUTPUT
+
+          # Update Firestore EARLY with size and filename
+          echo "$FIREBASE_SERVICE_ACCOUNT" > service-account.json
+          
+          export STATUS="downloading"
+          export FILENAME="$FILENAME"
+          export TOTAL_SIZE="$TOTAL_SIZE"
+          export CHUNK_URLS_FILE=""
+          
+          node scripts/update-firestore.js
+
+          # 2. Download Content with Aria2 (Robust, Resumable)
+          echo "Downloading with aria2c..."
+          aria2c -x 16 -s 16 -k 1M --check-certificate=false --user-agent="Mozilla/5.0" -o "download.tmp" "$DOWNLOAD_URL"
+          
+          # Update size if obtained after download (sometimes Content-Length implies wrong size or is missing)
+          ACTUAL_SIZE=$(stat -c%s "download.tmp")
+          echo "Actual Downloaded Size: $ACTUAL_SIZE bytes"
+          echo "total_size=$ACTUAL_SIZE" >> $GITHUB_OUTPUT # Override previous output if different
+
+          # 3. Validation
+          FILE_MIME=$(file -b --mime-type "download.tmp")
+          echo "File Mime Type: $FILE_MIME"
+          
+          if [[ "$FILE_MIME" == "text/html" ]]; then
+             echo "::error::Downloaded file is an HTML page, not a binary. Check your direct link."
+             echo "Preview of content:"
+             head -n 20 "download.tmp"
+             exit 1
+          fi
+
           # Get file size
           TOTAL_SIZE=$(stat -c%s download.tmp)
           echo "Total Size: $TOTAL_SIZE bytes"
           echo "total_size=$TOTAL_SIZE" >> $GITHUB_OUTPUT
           
-          # Try to determine filename from URL or payload
-          # We use the basename of URL as default or payload filename
-          FILENAME="${{ github.event.client_payload.filename }}"
-          if [ -z "$FILENAME" ]; then
-            FILENAME=$(basename "$DOWNLOAD_URL")
-          fi
-          # Fallback if filename is empty or invalid
-          if [ -z "$FILENAME" ] || [ "$FILENAME" == "/" ]; then
-            FILENAME="downloaded-file.bin"
-          fi
-          
-          # Sanitize filename to avoid weird chars
-          FILENAME=$(echo "$FILENAME" | sed 's/[^a-zA-Z0-9._-]/_/g')
-
-          echo "Filename: $FILENAME"
-          echo "filename=$FILENAME" >> $GITHUB_OUTPUT
-
-          # Split file into 1.9GB chunks with numeric suffixes (chunk_00, chunk_01...)
-          # 1900M = 1900 * 1024 * 1024 bytes
+          # Split file into 1.9GB chunks
           split -d -b 1900M download.tmp chunk_
           
-          # List generated chunks
           ls -l chunk_*
 
       - name: Create Release & Upload Assets
         id: create_release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          DOC_ID: ${{ github.event.client_payload.doc_id }}
+          FILENAME: ${{ steps.process_file.outputs.filename }}
+          TOTAL_SIZE: ${{ steps.process_file.outputs.total_size }}
         run: |
           DOC_ID="${{ github.event.client_payload.doc_id }}"
           FILENAME="${{ steps.process_file.outputs.filename }}"
           TAG_NAME="leech-${DOC_ID}-$(date +%s)"
+          
+          # Update status to processing
+          export STATUS="processing"
+          export CHUNK_URLS_FILE=""
+          node scripts/update-firestore.js
           
           echo "Creating release $TAG_NAME for $FILENAME..."
           
@@ -88,6 +156,7 @@ jobs:
           FILENAME: ${{ steps.process_file.outputs.filename }}
           TOTAL_SIZE: ${{ steps.process_file.outputs.total_size }}
           CHUNK_URLS_FILE: 'chunk_urls.txt'
+          STATUS: 'completed'
         run: |
           TAG_NAME="${{ steps.create_release.outputs.tag_name }}"
           
