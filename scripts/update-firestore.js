@@ -2,7 +2,13 @@ const admin = require('firebase-admin');
 const fs = require('fs');
 
 async function updateFirestore() {
-  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+  // Use a file for service account to avoid env var truncation issues
+  let serviceAccount;
+  if (fs.existsSync('service-account.json')) {
+    serviceAccount = JSON.parse(fs.readFileSync('service-account.json', 'utf8'));
+  } else {
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+  }
   const docId = process.env.DOC_ID;
   const filename = process.env.FILENAME;
   const totalSize = parseInt(process.env.TOTAL_SIZE, 10);

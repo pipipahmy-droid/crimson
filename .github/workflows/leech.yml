@@ -98,6 +98,9 @@ jobs:
           echo "Found chunk URLs:"
           cat chunk_urls.txt
           
+          # Write Service Account to a file to avoid JSON parsing issues with env vars
+          echo "$FIREBASE_SERVICE_ACCOUNT" > service-account.json
+
           # Run the node script to update Firestore
           echo "Updating Firestore..."
           node scripts/update-firestore.js
