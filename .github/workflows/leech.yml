@@ -18,8 +18,11 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Firebase Admin
-        run: npm install firebase-admin
+      - name: Install Dependencies
+        run: |
+          npm install firebase-admin
+          sudo apt-get update
+          sudo apt-get install -y aria2
 
       - name: Download & Split File
         id: process_file
@@ -34,15 +37,17 @@ jobs:
           mkdir -p leech_download
           cd leech_download
           
-          # Download with curl, using -J to let curl determine the filename
-          # -L follows redirects
-          # -O saves to file
-          # -J uses Content-Disposition
-          curl -L -J -O "$DOWNLOAD_URL"
+          # Download with aria2c
+          # -x16: 16 connections
+          # -s16: 16 splits
+          # -k1M: min split size
+          # --check-certificate=false: avoid SSL issues with some mirrors
+          # --user-agent: mimic browser
+          aria2c -x16 -s16 -k1M --check-certificate=false --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (HTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" "$DOWNLOAD_URL"
           
-          # Find the downloaded file (should be the only file in this dir)
-          # Use printf to handle spaces/newlines safely
-          DOWNLOADED_FILE=$(ls | head -n 1)
+          # Find the downloaded file (exclude .aria2 files if any remain, though normally deleted on success)
+          # ls -1 lists one file per line, grep -v filters out .aria2
+          DOWNLOADED_FILE=$(ls | grep -v "\.aria2$" | head -n 1)
           
           echo "Downloaded raw filename: $DOWNLOADED_FILE"
           
@@ -52,17 +57,11 @@ jobs:
           elif [ -n "$DOWNLOADED_FILE" ]; then
              FILENAME="$DOWNLOADED_FILE"
           else
-             # Fallback if curl -J didn't work (e.g. no C-D header and -O used prompt)
              FILENAME="downloaded-content.bin"
           fi
           
           # Sanitize Filename to ensure it is URL-safe and FS-safe
-          # Remove accents, weird chars, keep alphanum, dot, dash, underscore
-          # This fixes the "gajelas" filename issue
-          # Also ensure no quotes to break Content-Disposition in Worker
           CLEAN_FILENAME=$(echo "$FILENAME" | tr -d '"' | tr -d "'" | tr -d '[:cntrl:]') 
-          # You might want a stronger sanitizer here, like node script, but basic tr is okay for now
-          # Let's use a quick node one-liner for better cleaning if node is available
           CLEAN_FILENAME=$(node -e "console.log(decodeURIComponent(\"${CLEAN_FILENAME}\").replace(/[^a-zA-Z0-9._-]/g, '_').replace(/_+/g, '_'))")
           
           echo "Check sanitized: $CLEAN_FILENAME"
