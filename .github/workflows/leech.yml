@@ -18,100 +18,62 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Dependencies
-        run: |
-          npm install firebase-admin
-          sudo apt-get update
-          sudo apt-get install -y aria2
+      - name: Install Firebase Admin
+        run: npm install firebase-admin
 
-      - name: Analyze & Start Download
+      - name: Download & Split File
         id: process_file
-        env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          DOC_ID: ${{ github.event.client_payload.doc_id }}
         run: |
           DOWNLOAD_URL="${{ github.event.client_payload.download_url }}"
+          DOC_ID="${{ github.event.client_payload.doc_id }}"
+          PAYLOAD_FILENAME="${{ github.event.client_payload.filename }}"
           
           echo "Analyzing URL: $DOWNLOAD_URL"
           
-          # 1. Fetch headers to detect filename & size
-          curl -sI -L "$DOWNLOAD_URL" > headers.txt
-          cat headers.txt
+          # Create a directory to isolate the download
+          mkdir -p leech_download
+          cd leech_download
           
-          # Extract Content-Length
-          TOTAL_SIZE=$(grep -i "content-length" headers.txt | awk '{print $2}' | tr -d '\r')
-          if [ -z "$TOTAL_SIZE" ]; then
-             TOTAL_SIZE=0
-          fi
-          echo "Early Total Size: $TOTAL_SIZE bytes"
-
-          # Extract filename from Content-Disposition
-          REMOTE_FILENAME=$(grep -i "content-disposition" headers.txt | grep -o 'filename[^;]*' | sed 's/[^=]*=//' | tr -d '"' | tr -d '\r' | head -n 1)
-
-          echo "Detected remote filename: $REMOTE_FILENAME"
+          # Download with curl, using -J to let curl determine the filename
+          # -L follows redirects
+          # -O saves to file
+          # -J uses Content-Disposition
+          curl -L -J -O "$DOWNLOAD_URL"
           
-          # Name Logic: Payload -> Remote Header -> URL Basename
-          FILENAME="${{ github.event.client_payload.filename }}"
+          # Find the downloaded file (should be the only file in this dir)
+          # Use printf to handle spaces/newlines safely
+          DOWNLOADED_FILE=$(ls | head -n 1)
           
-          if [ -z "$FILENAME" ] && [ -n "$REMOTE_FILENAME" ]; then
-             FILENAME="$REMOTE_FILENAME"
-          fi
+          echo "Downloaded raw filename: $DOWNLOADED_FILE"
           
-          if [ -z "$FILENAME" ]; then
-             # Remove query parameters first
-             CLEAN_URL=$(echo "$DOWNLOAD_URL" | cut -d'?' -f1)
-             FILENAME=$(basename "$CLEAN_URL")
+          # Determine Final Filename
+          if [ -n "$PAYLOAD_FILENAME" ]; then
+             FILENAME="$PAYLOAD_FILENAME"
+          elif [ -n "$DOWNLOADED_FILE" ]; then
+             FILENAME="$DOWNLOADED_FILE"
+          else
+             # Fallback if curl -J didn't work (e.g. no C-D header and -O used prompt)
+             FILENAME="downloaded-content.bin"
           fi
           
-          # Advanced Sanitization: Remove garbage suffix like _ts_gAAAA...
-          # Strategy: If it looks like a known extension followed by junk, cut it
-          FILENAME=$(echo "$FILENAME" | sed -E 's/(\.zip|\.rar|\.7z|\.iso|\.mp4|\.mkv|\.avi|\.tar|\.gz|\.xz)[^a-zA-Z0-9]*.*$/\1/I')
-
-          # General sanitization for filesystem safety
-          # Allow A-Z, 0-9, . _ -
-          FILENAME=$(echo "$FILENAME" | sed 's/[^a-zA-Z0-9._-]/-/g')
+          # Sanitize Filename to ensure it is URL-safe and FS-safe
+          # Remove accents, weird chars, keep alphanum, dot, dash, underscore
+          # This fixes the "gajelas" filename issue
+          # Also ensure no quotes to break Content-Disposition in Worker
+          CLEAN_FILENAME=$(echo "$FILENAME" | tr -d '"' | tr -d "'" | tr -d '[:cntrl:]') 
+          # You might want a stronger sanitizer here, like node script, but basic tr is okay for now
+          # Let's use a quick node one-liner for better cleaning if node is available
+          CLEAN_FILENAME=$(node -e "console.log(decodeURIComponent(\"${CLEAN_FILENAME}\").replace(/[^a-zA-Z0-9._-]/g, '_').replace(/_+/g, '_'))")
           
-          # Fallback
-          if [ -z "$FILENAME" ]; then
-             FILENAME="downloaded-file.bin"
-          fi
+          echo "Check sanitized: $CLEAN_FILENAME"
           
-          echo "Final Sanitized Filename: $FILENAME"
-          echo "filename=$FILENAME" >> $GITHUB_OUTPUT
-          echo "total_size=$TOTAL_SIZE" >> $GITHUB_OUTPUT
-
-          # Update Firestore EARLY with size and filename
-          echo "$FIREBASE_SERVICE_ACCOUNT" > service-account.json
+          # Rename for processing
+          mv "$DOWNLOADED_FILE" "../download.tmp"
+          cd ..
+          rm -rf leech_download
           
-          export STATUS="downloading"
-          export FILENAME="$FILENAME"
-          export TOTAL_SIZE="$TOTAL_SIZE"
-          export CHUNK_URLS_FILE=""
-          
-          node scripts/update-firestore.js
-
-          # 2. Download Content with Aria2 (Robust, Resumable)
-          echo "Downloading with aria2c..."
-          # Optimized for speed: 
-          # -x16: Max connections
-          # -s16: Max split
-          # --file-allocation=none: Instant start, prevents disk pre-alloc delay
-          # --summary-interval=5: Show progress every 5s
-          # --max-tries=20: Retry resiliently
-          aria2c -x 16 -s 16 -k 5M \
-            --check-certificate=false \
-            --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" \
-            --file-allocation=none \
-            --summary-interval=5 \
-            --max-tries=20 \
-            --retry-wait=3 \
-            --connect-timeout=60 \
-            -o "download.tmp" "$DOWNLOAD_URL"
-          
-          # Update size if obtained after download (sometimes Content-Length implies wrong size or is missing)
-          ACTUAL_SIZE=$(stat -c%s "download.tmp")
-          echo "Actual Downloaded Size: $ACTUAL_SIZE bytes"
-          echo "total_size=$ACTUAL_SIZE" >> $GITHUB_OUTPUT # Override previous output if different
+          echo "Final Processing Filename: $CLEAN_FILENAME"
+          echo "filename=$CLEAN_FILENAME" >> $GITHUB_OUTPUT
 
           # 3. Validation
           FILE_MIME=$(file -b --mime-type "download.tmp")
@@ -138,19 +100,10 @@ jobs:
         id: create_release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          DOC_ID: ${{ github.event.client_payload.doc_id }}
-          FILENAME: ${{ steps.process_file.outputs.filename }}
-          TOTAL_SIZE: ${{ steps.process_file.outputs.total_size }}
         run: |
           DOC_ID="${{ github.event.client_payload.doc_id }}"
           FILENAME="${{ steps.process_file.outputs.filename }}"
           TAG_NAME="leech-${DOC_ID}-$(date +%s)"
-          
-          # Update status to processing
-          export STATUS="processing"
-          export CHUNK_URLS_FILE=""
-          node scripts/update-firestore.js
           
           echo "Creating release $TAG_NAME for $FILENAME..."
           
@@ -170,7 +123,6 @@ jobs:
           FILENAME: ${{ steps.process_file.outputs.filename }}
           TOTAL_SIZE: ${{ steps.process_file.outputs.total_size }}
           CHUNK_URLS_FILE: 'chunk_urls.txt'
-          STATUS: 'completed'
         run: |
           TAG_NAME="${{ steps.create_release.outputs.tag_name }}"
           

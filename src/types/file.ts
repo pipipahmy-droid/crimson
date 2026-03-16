@@ -6,7 +6,6 @@ export interface FileItem {
   originalUrl: string;
   filename?: string;
   fileSize?: number;
-  total_size?: number; // Added to support new backend logic
   status: FileStatus;
   progress: number;
   downloadUrl?: string;

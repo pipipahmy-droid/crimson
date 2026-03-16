@@ -10,46 +10,41 @@ async function updateFirestore() {
     serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
   }
   const docId = process.env.DOC_ID;
-  const collectionName = process.env.FIREBASE_COLLECTION_NAME || 'files';
-  const status = process.env.STATUS || 'completed';
-  
-  // Optional fields
   const filename = process.env.FILENAME;
-  const totalSize = process.env.TOTAL_SIZE ? parseInt(process.env.TOTAL_SIZE, 10) : null;
+  const totalSize = parseInt(process.env.TOTAL_SIZE, 10);
+  const collectionName = process.env.FIREBASE_COLLECTION_NAME || 'files';
+  
+  // Read chunk URLs from a temporary file where we stored them
+  // The workflow will produce a file containing URLs, one per line
   const chunkUrlsFile = process.env.CHUNK_URLS_FILE;
+  const chunkUrls = fs.readFileSync(chunkUrlsFile, 'utf8')
+    .split('\n')
+    .filter(url => url.trim().length > 0);
 
-  if (!serviceAccount || !docId) {
-    console.error('Missing required environment variables (DOC_ID, FIREBASE_SERVICE_ACCOUNT).');
+  if (!serviceAccount || !docId || !filename || !chunkUrlsFile) {
+    console.error('Missing required environment variables.');
     process.exit(1);
   }
 
   try {
-    // Check if initialized
-    if (!admin.apps.length) {
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-      });
-    }
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
 
     const db = admin.firestore();
-    console.log(`Updating document ${docId} in collection ${collectionName} with status: ${status}`);
+    
+    console.log(`Updating document ${docId} in collection ${collectionName}...`);
+    console.log(`Filename: ${filename}`);
+    console.log(`Total Size: ${totalSize}`);
+    console.log(`Chunks: ${chunkUrls.length}`);
 
-    const updateData = {
-      status: status,
-      updated_at: admin.firestore.FieldValue.serverTimestamp(),
-    };
-
-    if (filename) updateData.filename = filename;
-    if (totalSize !== null) updateData.total_size = totalSize;
-
-    if (chunkUrlsFile && fs.existsSync(chunkUrlsFile)) {
-         const chunkUrlsData = fs.readFileSync(chunkUrlsFile, 'utf8');
-         const chunkUrls = chunkUrlsData.split('\n').filter(url => url.trim().length > 0);
-         updateData.chunk_urls = chunkUrls;
-         console.log(`Adding ${chunkUrls.length} chunk URLs.`);
-    }
-
-    await db.collection(collectionName).doc(docId).set(updateData, { merge: true });
+    await db.collection(collectionName).doc(docId).set({
+      filename: filename,
+      total_size: totalSize,
+      chunk_urls: chunkUrls,
+      created_at: admin.firestore.FieldValue.serverTimestamp(),
+      status: 'completed'
+    }, { merge: true });
 
     console.log('Firestore update successful.');
     process.exit(0);

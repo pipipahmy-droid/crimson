@@ -5,7 +5,6 @@ import { collection, query, where, orderBy, onSnapshot, Timestamp } from "fireba
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/hooks/use-auth";
 import { FileItem } from "@/types/file";
-import { cn } from "@/lib/utils";
 import { 
   Table, 
   TableBody, 
@@ -19,15 +18,6 @@ import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Download, ExternalLink, Loader2, Trash2, FileIcon } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-
-function formatBytes(bytes: number, decimals = 2) {
-    if (!bytes || isNaN(bytes)) return "0 Bytes";
-    const k = 1024;
-    const dm = decimals < 0 ? 0 : decimals;
-    const sizes = ["Bytes", "KB", "MB", "GB", "TB", "PB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
-}
 
 export function FilesList() {
   const { user } = useAuth();
@@ -128,17 +118,12 @@ export function FilesList() {
               <TableCell>{getStatusBadge(file.status)}</TableCell>
               <TableCell>
                 {file.status === "processing" || file.status === "downloading" ? (
-                  <div className="w-[140px] space-y-1">
-                    <div className="text-xs text-muted-foreground flex justify-between">
-                       <span>{(file.total_size || file.fileSize) ? formatBytes(file.total_size || file.fileSize || 0) : "Size..."}</span>
-                       <span>{file.progress}%</span>
-                    </div>
+                  <div className="w-[120px] space-y-1">
                     <Progress value={file.progress} className="h-2" />
+                    <span className="text-xs text-muted-foreground">{file.progress}%</span>
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-1 w-[140px]">
-                    <span className="text-xs text-muted-foreground">{file.total_size ? formatBytes(file.total_size) : (file.fileSize ? formatBytes(file.fileSize) : "-")}</span>
-                  </div>
+                  <span className="text-sm text-muted-foreground">-</span>
                 )}
               </TableCell>
               <TableCell className="text-muted-foreground text-sm">

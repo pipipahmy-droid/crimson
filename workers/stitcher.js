@@ -88,11 +88,16 @@ export default {
             for (const chunkUrl of chunkUrls) {
               // Fetch the chunk 
               // We use a new request to ensure no identifying headers are forwarded unless intended
-              const chunkResponse = await fetch(chunkUrl);
+              // Add User-Agent to avoid potential blocks from GitHub/S3
+              const chunkResponse = await fetch(chunkUrl, {
+                headers: {
+                  "User-Agent": "Crimson-Stitcher/1.0",
+                }
+              });
 
               if (!chunkResponse.ok) {
                 console.error(`Failed to fetch chunk: ${chunkUrl} - ${chunkResponse.status}`);
-                controller.error(new Error(`Failed to fetch chunk: ${chunkUrl}`));
+                controller.error(new Error(`Failed to fetch chunk: ${chunkUrl} - ${chunkResponse.status}`));
                 return;
               }
 
