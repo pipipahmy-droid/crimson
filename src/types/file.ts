@@ -12,4 +12,5 @@ export interface FileItem {
   error?: string;
   createdAt: number;
   updatedAt: number;
+  md5_hash?: string;
 }

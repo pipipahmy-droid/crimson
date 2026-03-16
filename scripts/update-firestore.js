@@ -12,6 +12,7 @@ async function updateFirestore() {
   const docId = process.env.DOC_ID;
   const filename = process.env.FILENAME;
   const totalSize = parseInt(process.env.TOTAL_SIZE, 10);
+  const md5Hash = process.env.MD5_HASH || null;
   const collectionName = process.env.FIREBASE_COLLECTION_NAME || 'files';
   
   // Read chunk URLs from a temporary file where we stored them
@@ -42,6 +43,7 @@ async function updateFirestore() {
       filename: filename,
       total_size: totalSize,
       chunk_urls: chunkUrls,
+      md5_hash: md5Hash,
       created_at: admin.firestore.FieldValue.serverTimestamp(),
       status: 'completed'
     }, { merge: true });

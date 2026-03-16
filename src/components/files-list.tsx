@@ -44,6 +44,7 @@ export function FilesList() {
           ...data,
           createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : (data.createdAt || Date.now()),
           updatedAt: data.updatedAt?.toMillis ? data.updatedAt.toMillis() : (data.updatedAt || Date.now()),
+          md5_hash: data.md5_hash, // Ensure this property is read from Firestore
         };
       }) as FileItem[];
       setFiles(filesData);
@@ -106,13 +107,18 @@ export function FilesList() {
           {files.map((file) => (
             <TableRow key={file.id}>
               <TableCell className="font-medium">
-                <div className="flex flex-col gap-1 max-w-[300px]">
+                <div className="flex flex-col gap-1 max-w-[300px] overflow-hidden">
                   <span className="truncate font-semibold" title={file.filename || "Unknown"}>
                     {file.filename || "Mapping filename..."}
                   </span>
                   <span className="truncate text-xs text-muted-foreground" title={file.originalUrl}>
                     {file.originalUrl}
                   </span>
+                  {file.md5_hash && (
+                    <span className="text-[10px] text-muted-foreground font-mono truncate" title={`MD5: ${file.md5_hash}`}>
+                      MD5: {file.md5_hash.substring(0, 8)}...
+                    </span>
+                  )}
                 </div>
               </TableCell>
               <TableCell>{getStatusBadge(file.status)}</TableCell>

@@ -71,7 +71,19 @@ export default {
       }
 
       const filename = fields.filename?.stringValue || "download.bin";
-      const totalSize = parseInt(fields.total_size?.integerValue || "0", 10);
+      
+      // Robustly parse total_size from possible Firestore types
+      let totalSize = 0;
+      if (fields.total_size) {
+        if (fields.total_size.integerValue) {
+          totalSize = parseInt(fields.total_size.integerValue, 10);
+        } else if (fields.total_size.doubleValue) {
+          totalSize = Math.floor(fields.total_size.doubleValue);
+        } else if (fields.total_size.stringValue) {
+          // Fallback if stored as string
+          totalSize = parseInt(fields.total_size.stringValue, 10);
+        }
+      }
       
       const chunkUrlsArray = fields.chunk_urls?.arrayValue?.values || [];
       const chunkUrls = chunkUrlsArray.map((v) => v.stringValue).filter(Boolean);
@@ -89,9 +101,11 @@ export default {
               // Fetch the chunk 
               // We use a new request to ensure no identifying headers are forwarded unless intended
               // Add User-Agent to avoid potential blocks from GitHub/S3
+              // Force identity encoding to prevent transparent GZIP decompression by Fetch API
               const chunkResponse = await fetch(chunkUrl, {
                 headers: {
                   "User-Agent": "Crimson-Stitcher/1.0",
+                  "Accept-Encoding": "identity",
                 }
               });
 
@@ -127,14 +141,18 @@ export default {
       });
 
       // 3. Return response with correct headers
+      const headers = {
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Content-Type": "application/octet-stream",
+        "Access-Control-Allow-Origin": "*",
+      };
+
+      if (totalSize > 0) {
+        headers["Content-Length"] = totalSize.toString();
+      }
+
       return new Response(stream, {
-        headers: {
-          "Content-Disposition": `attachment; filename="${filename}"`,
-          "Content-Type": "application/octet-stream",
-          "Content-Length": totalSize.toString(),
-          // Add CORS headers if needed for browser downloads triggering from frontend
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers: headers,
       });
 
     } catch (err) {

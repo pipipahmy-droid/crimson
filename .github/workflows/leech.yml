@@ -89,6 +89,11 @@ jobs:
           TOTAL_SIZE=$(stat -c%s download.tmp)
           echo "Total Size: $TOTAL_SIZE bytes"
           echo "total_size=$TOTAL_SIZE" >> $GITHUB_OUTPUT
+
+          # Calculate MD5
+          MD5_HASH=$(md5sum download.tmp | awk '{print $1}')
+          echo "MD5: $MD5_HASH"
+          echo "md5_hash=$MD5_HASH" >> $GITHUB_OUTPUT
           
           # Split file into 1.9GB chunks
           split -d -b 1900M download.tmp chunk_
@@ -121,6 +126,7 @@ jobs:
           DOC_ID: ${{ github.event.client_payload.doc_id }}
           FILENAME: ${{ steps.process_file.outputs.filename }}
           TOTAL_SIZE: ${{ steps.process_file.outputs.total_size }}
+          MD5_HASH: ${{ steps.process_file.outputs.md5_hash }}
           CHUNK_URLS_FILE: 'chunk_urls.txt'
         run: |
           TAG_NAME="${{ steps.create_release.outputs.tag_name }}"
