@@ -47,7 +47,7 @@ jobs:
           
           # Find the downloaded file (exclude .aria2 files if any remain, though normally deleted on success)
           # ls -1 lists one file per line, grep -v filters out .aria2
-          DOWNLOADED_FILE=$(ls | grep -v "\.aria2$" | head -n 1)
+          DOWNLOADED_FILE=$(ls | grep -E -v "\.aria2$|service-account\.json" | head -n 1)
           
           echo "Downloaded raw filename: $DOWNLOADED_FILE"
           
