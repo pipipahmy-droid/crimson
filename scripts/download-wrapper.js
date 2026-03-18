@@ -57,46 +57,49 @@ async function main() {
   const child = spawn('aria2c', args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
   let lastUpdate = 0;
+  let buffer = '';
 
   child.stdout.on('data', async (data) => {
-    const text = data.toString();
-    process.stdout.write(text); // Pipe to Github Actions log
-    
-    // Parse progress: [#123456 12MiB/90MiB(13%) CN:16 DL:5.2MiB]
-            const match = text.match(/\[[^ ]+\s+([0-9.]+)([KMGT]iB|B)\/([0-9.]+)([KMGT]iB|B)\(([0-9]+)%\).*?DL:([0-9.]+)([KMGT]iB|B)/);
-    if (match && db) {
-      let dlUnit = match[2];
-      let downloadedMB = parseFloat(match[1]);
-      if (dlUnit === 'KiB') downloadedMB = downloadedMB / 1024;
-      else if (dlUnit === 'GiB') downloadedMB = downloadedMB * 1024;
-      else if (dlUnit === 'B') downloadedMB = downloadedMB / (1024 * 1024);
+    const rawText = data.toString();
+    process.stdout.write(rawText); // Pipe to Github Actions log
 
-      const progress = parseInt(match[5], 10);
-      
-      let spUnit = match[7];
-      let speed = parseFloat(match[6]);
-      if (spUnit === 'KiB') speed = speed / 1024;
-      else if (spUnit === 'GiB') speed = speed * 1024;
-      else if (spUnit === 'B') speed = speed / (1024 * 1024);
+    buffer += rawText;
+    // Remove ANSI escape codes if any
+    buffer = buffer.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
 
-      // rounding
-      downloadedMB = Math.round(downloadedMB * 10) / 10;
-      speed = Math.round(speed * 10) / 10;
+    const lines = buffer.split(/[\r\n]+/);
+    buffer = lines.pop() || ''; // keep the last potentially incomplete line in buffer
 
-      const now = Date.now();
-      if (now - lastUpdate > 1000) { // Throttle updates to every 1s
-        lastUpdate = now;
-        try {
+    for (const line of lines) {
+      const match = line.match(/\[[^ ]+\s+([0-9.]+)([KMGT]iB|B)\/([0-9.]+)([KMGT]iB|B)\(([0-9]+)%\).*?DL:([0-9.]+)([KMGT]iB|B)/);
+      if (match && db) {
+        let dlUnit = match[2];
+        let downloadedMB = parseFloat(match[1]);
+        if (dlUnit === 'KiB') downloadedMB = downloadedMB / 1024;
+        else if (dlUnit === 'GiB') downloadedMB = downloadedMB * 1024;
+        else if (dlUnit === 'B') downloadedMB = downloadedMB / (1024 * 1024);
+
+        const progress = parseInt(match[5], 10);
+
+        let spUnit = match[7];
+        let speed = parseFloat(match[6]);
+        if (spUnit === 'KiB') speed = speed / 1024;
+        else if (spUnit === 'GiB') speed = speed * 1024;
+        else if (spUnit === 'B') speed = speed / (1024 * 1024);
+
+        downloadedMB = Math.round(downloadedMB * 10) / 10;
+        speed = Math.round(speed * 10) / 10;
+
+        const now = Date.now();
+        if (now - lastUpdate > 1000) { // Throttle updates to every 1s
+          lastUpdate = now;
           db.collection(collectionName).doc(docId).set({
             progress,
             speed,
             downloadedMB,
             updatedAt: Date.now()
           }, { merge: true }).catch(()=>{});
-        } catch(e) {}
-      }
-    }
-  });
+        }
 
   child.stderr.on('data', (data) => {
     process.stderr.write(data);
