@@ -100,6 +100,9 @@ async function main() {
             updatedAt: Date.now()
           }, { merge: true }).catch(()=>{});
         }
+      }
+    }
+  });
 
   child.stderr.on('data', (data) => {
     process.stderr.write(data);
