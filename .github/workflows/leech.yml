@@ -26,6 +26,8 @@ jobs:
 
       - name: Download & Split File
         id: process_file
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
           DOWNLOAD_URL="${{ github.event.client_payload.download_url }}"
           DOC_ID="${{ github.event.client_payload.doc_id }}"
@@ -37,13 +39,11 @@ jobs:
           mkdir -p leech_download
           cd leech_download
           
-          # Download with aria2c
-          # -x16: 16 connections
-          # -s16: 16 splits
-          # -k1M: min split size
-          # --check-certificate=false: avoid SSL issues with some mirrors
-          # --user-agent: mimic browser
-          aria2c -x16 -s16 -k1M --check-certificate=false --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (HTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" "$DOWNLOAD_URL"
+# Write Service Account to a file
+          echo "$FIREBASE_SERVICE_ACCOUNT" > service-account.json
+
+          # Download with node wrapper to report progress
+          node ../scripts/download-wrapper.js "$DOWNLOAD_URL" "$DOC_ID"
           
           # Find the downloaded file (exclude .aria2 files if any remain, though normally deleted on success)
           # ls -1 lists one file per line, grep -v filters out .aria2
