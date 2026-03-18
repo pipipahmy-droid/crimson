@@ -182,7 +182,7 @@ export default function LeechForm() {
           <div className="flex justify-between text-sm font-medium">
              <span className="flex items-center gap-2 text-foreground">
                {status === 'pending' && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground"/>}
-               {status === 'pending' && "Initializing job..."}
+               {status === 'pending' && "Initializing files..."}
                
                {status === 'running' && <Loader2 className="w-3.5 h-3.5 animate-spin text-primary"/>}
                {status === 'running' && "Mirroring in progress..."}

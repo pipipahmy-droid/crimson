@@ -20,8 +20,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          npm install firebase-admin
-          sudo apt-get update
+          npm install firebase-admin --no-save --no-audit --no-fund --loglevel=error
           sudo apt-get install -y aria2
 
       - name: Download & Split File
