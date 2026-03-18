@@ -33,20 +33,23 @@ export function FilesList() {
     const q = query(
       collection(db, "files"),
       where("userId", "==", user.uid),
-      orderBy("createdAt", "desc")
+      
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const filesData = snapshot.docs.map((doc) => {
+            let filesData = snapshot.docs.map((doc) => {
         const data = doc.data();
+        const timeVal = data.createdAt || data.created_at || Date.now();
         return {
           id: doc.id,
           ...data,
-          createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : (data.createdAt || Date.now()),
+          createdAt: typeof timeVal?.toMillis === 'function' ? timeVal.toMillis() : (timeVal || Date.now()),
           updatedAt: data.updatedAt?.toMillis ? data.updatedAt.toMillis() : (data.updatedAt || Date.now()),
-          md5_hash: data.md5_hash, // Ensure this property is read from Firestore
+          md5_hash: data.md5_hash,
         };
       }) as FileItem[];
+      
+      filesData.sort((a, b) => b.createdAt - a.createdAt);
       setFiles(filesData);
       setLoading(false);
     }, (error) => {
