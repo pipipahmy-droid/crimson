@@ -60,8 +60,10 @@ export function Navbar() {
                </Button>
             </div>
           ) : (
-            <Button size="sm" onClick={signInWithGoogle}>
-              Sign In
+            <Button size="sm">
+              <Link href="/signup">  
+                Sign In
+              </Link>
             </Button>
           )}
         </div>

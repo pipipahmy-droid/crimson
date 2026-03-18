@@ -6,12 +6,13 @@ import crypto from 'crypto';
 interface LeechRequest {
   url: string;
   filename?: string;
+  userId?: string;
 }
 
 export async function POST(request: Request) {
   try {
     const body: LeechRequest = await request.json();
-    const { url, filename } = body;
+    const { url, filename, userId } = body;
 
     if (!url) {
       return NextResponse.json(
@@ -31,11 +32,15 @@ export async function POST(request: Request) {
     
     // We store initial metadata so UI can show "Processing..." immediately
     await db.collection(collectionName).doc(docId).set({
-      original_url: url,
+      originalUrl: url,
       filename: filename || 'unknown',
       status: 'pending', // pending -> processing -> completed / failed
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      userId: userId || 'anonymous',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      progress: 0,
+      speed: 0,
+      downloadedMB: 0,
     });
 
     // 3. Trigger GitHub Actions Workflow via repository_dispatch

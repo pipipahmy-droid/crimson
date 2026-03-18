@@ -47,7 +47,7 @@ export default function LeechForm() {
       const response = await fetch("/api/leech", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, userId: user?.uid }),
       });
       const data = await response.json();
       
@@ -72,7 +72,7 @@ export default function LeechForm() {
     const unsub = onSnapshot(doc(db, "files", docId), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        
+
         if (data.status === 'completed') {
            setStatus("completed");
            setProgress(100);
@@ -85,6 +85,9 @@ export default function LeechForm() {
         } else {
            // Still processing
            setStatus("running");
+           if (typeof data.progress === 'number') setProgress(data.progress);
+           if (typeof data.speed === 'number') setSpeed(data.speed);
+           if (typeof data.downloadedMB === 'number') setDownloadedMB(data.downloadedMB);
         }
       }
     });
@@ -92,20 +95,9 @@ export default function LeechForm() {
     return () => unsub();
   }, [docId]);
 
-  let lastProgress = progress;
+  // Remove the fake progress interval by commenting it out or deleting it
   // Simulated progress for visual feedback
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (status === 'running' || status === 'pending') {
-      interval = setInterval(() => {
-        setProgress((prev) => {
-           if (prev >= 90) return 90; // Cap at 90% until done
-           return prev + Math.random() * 2;
-        });
-      }, 500);
-    }
-    return () => clearInterval(interval);
-  }, [status]);
+  // (Removed so true server limits show)
 
 
   if (authLoading) {

@@ -93,66 +93,71 @@ export default {
       }
 
       // 2. Stream Stitching Logic
-      // Create a readable stream that pulls from each chunk URL sequentially
-      const stream = new ReadableStream({
-        async start(controller) {
-          try {
-            for (const chunkUrl of chunkUrls) {
-              // Fetch the chunk 
-              // We use a new request to ensure no identifying headers are forwarded unless intended
-              // Add User-Agent to avoid potential blocks from GitHub/S3
-              // Force identity encoding to prevent transparent GZIP decompression by Fetch API
-              const chunkResponse = await fetch(chunkUrl, {
-                headers: {
-                  "User-Agent": "Crimson-Stitcher/1.0",
-                  "Accept-Encoding": "identity",
-                }
-              });
-
-              if (!chunkResponse.ok) {
-                console.error(`Failed to fetch chunk: ${chunkUrl} - ${chunkResponse.status}`);
-                controller.error(new Error(`Failed to fetch chunk: ${chunkUrl} - ${chunkResponse.status}`));
-                return;
+      // MENGGUNAKAN CELAH CLOUDFLARE: FixedLengthStream
+      // Ini adalah API khusus Cloudflare untuk memaksa stream agar TIDAK menjadi chunked
+      // dan tetap mengirimkan header Content-Length asli ke browser.
+      
+      let readable, writable;
+      // Jika runtime mendukung FixedLengthStream (standar baru Worker untuk kasus ini)
+      if (typeof FixedLengthStream !== 'undefined' && totalSize > 0) {
+        const stream = new FixedLengthStream(totalSize);
+        readable = stream.readable;
+        writable = stream.writable;
+      } else {
+        // Fallback jika tidak ada
+        const transform = new TransformStream();
+        readable = transform.readable;
+        writable = transform.writable;
+      }
+      
+      // Start processing in the background
+      ctx.waitUntil((async () => {
+        const writer = writable.getWriter();
+        try {
+          for (const chunkUrl of chunkUrls) {
+            const chunkResponse = await fetch(chunkUrl, {
+              headers: {
+                "User-Agent": "Crimson-Stitcher/1.0",
+                "Accept-Encoding": "identity",
               }
+            });
 
-              if (!chunkResponse.body) {
-                console.error(`Empty body for chunk: ${chunkUrl}`);
-                controller.error(new Error(`Empty body for chunk: ${chunkUrl}`));
-                return;
-              }
-
-              // Pipe the chunk's body into our controller
-              const reader = chunkResponse.body.getReader();
-              
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                controller.enqueue(value);
-              }
+            if (!chunkResponse.ok) {
+              console.error(`Failed to fetch chunk: ${chunkUrl} - ${chunkResponse.status}`);
+              throw new Error(`Failed to fetch chunk: ${chunkResponse.status}`);
             }
-            
-            // All chunks processed
-            controller.close();
-          } catch (err) {
-            console.error("Stream stitching error:", err);
-            controller.error(err);
+
+            if (chunkResponse.body) {
+              await chunkResponse.body.pipeTo(new WritableStream({
+                async write(chunk) {
+                  await writer.write(chunk);
+                }
+              }), { preventClose: true });
+            }
           }
+          await writer.close();
+        } catch (err) {
+          console.error("Stream stitching error:", err);
+          await writer.abort(err);
         }
-      });
+      })());
 
       // 3. Return response with correct headers
       const headers = {
         "Content-Disposition": `attachment; filename="${filename}"`,
         "Content-Type": "application/octet-stream",
         "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-transform", 
+        "Accept-Ranges": "bytes",
       };
 
-      if (totalSize > 0) {
+      if (typeof totalSize === 'number' && !isNaN(totalSize) && totalSize > 0) {
         headers["Content-Length"] = totalSize.toString();
       }
 
-      return new Response(stream, {
+      return new Response(readable, {
         headers: headers,
+        // encodeBody: "manual" // Coba lepaskan ini jika FixedLengthStream dipakai
       });
 
     } catch (err) {

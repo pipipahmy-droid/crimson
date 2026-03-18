@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, IBM_Plex_Mono } from "next/font/google";
 import { AuthProvider } from "@/hooks/use-auth";
-import { Navbar } from "@/components/navbar";
 import "./globals.css";
 
 const inter = Inter({
@@ -30,8 +29,7 @@ export default function RootLayout({
       <body className="antialiased font-sans">
         <AuthProvider>
           <div className="relative flex min-h-screen flex-col">
-            <Navbar />
-            <div className="flex-1 pt-16">{children}</div>
+            {children}
           </div>
         </AuthProvider>
       </body>
