@@ -63,15 +63,28 @@ async function main() {
     process.stdout.write(text); // Pipe to Github Actions log
     
     // Parse progress: [#123456 12MiB/90MiB(13%) CN:16 DL:5.2MiB]
-    const match = text.match(/\[[^ ]+\s+([0-9.]+)MiB\/([0-9.]+)MiB\(([0-9]+)%\).*?DL:([0-9.]+)MiB/);
+            const match = text.match(/\[[^ ]+\s+([0-9.]+)([KMGT]iB|B)\/([0-9.]+)([KMGT]iB|B)\(([0-9]+)%\).*?DL:([0-9.]+)([KMGT]iB|B)/);
     if (match && db) {
-      const downloadedMB = parseFloat(match[1]);
-      const totalMB = parseFloat(match[2]);
-      const progress = parseInt(match[3], 10);
-      const speed = parseFloat(match[4]);
+      let dlUnit = match[2];
+      let downloadedMB = parseFloat(match[1]);
+      if (dlUnit === 'KiB') downloadedMB = downloadedMB / 1024;
+      else if (dlUnit === 'GiB') downloadedMB = downloadedMB * 1024;
+      else if (dlUnit === 'B') downloadedMB = downloadedMB / (1024 * 1024);
+
+      const progress = parseInt(match[5], 10);
       
+      let spUnit = match[7];
+      let speed = parseFloat(match[6]);
+      if (spUnit === 'KiB') speed = speed / 1024;
+      else if (spUnit === 'GiB') speed = speed * 1024;
+      else if (spUnit === 'B') speed = speed / (1024 * 1024);
+
+      // rounding
+      downloadedMB = Math.round(downloadedMB * 10) / 10;
+      speed = Math.round(speed * 10) / 10;
+
       const now = Date.now();
-      if (now - lastUpdate > 3000) { // Throttle updates to every 3s
+      if (now - lastUpdate > 1000) { // Throttle updates to every 1s
         lastUpdate = now;
         try {
           db.collection(collectionName).doc(docId).set({
@@ -82,25 +95,6 @@ async function main() {
           }, { merge: true }).catch(()=>{});
         } catch(e) {}
       }
-    } else {
-       // Also look for KB/s or GiB
-       const matchKB = text.match(/\[[^ ]+\s+([0-9.]+)MiB\/([0-9.]+)MiB\(([0-9]+)%\).*?DL:([0-9.]+)KiB/);
-       if (matchKB && db) {
-         const downloadedMB = parseFloat(matchKB[1]);
-         const totalMB = parseFloat(matchKB[2]);
-         const progress = parseInt(matchKB[3], 10);
-         const speed = parseFloat(matchKB[4]) / 1024; // Convert KiB to MiB
-         
-         const now = Date.now();
-         if (now - lastUpdate > 3000) {
-           lastUpdate = now;
-           try {
-             db.collection(collectionName).doc(docId).set({
-               progress, speed, downloadedMB, updatedAt: Date.now()
-             }, { merge: true }).catch(()=>{});
-           } catch(e) {}
-         }
-       }
     }
   });
 
