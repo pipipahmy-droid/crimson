@@ -39,7 +39,7 @@ jobs:
           mkdir -p leech_download
           cd leech_download
           
-# Write Service Account to a file
+          # Write Service Account to a file
           echo "$FIREBASE_SERVICE_ACCOUNT" > service-account.json
 
           # Download with node wrapper to report progress
