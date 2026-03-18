@@ -26,6 +26,8 @@ export default function LeechForm() {
   const [docId, setDocId] = useState<string | null>(null);
   
   const [progress, setProgress] = useState(0);
+  const [speed, setSpeed] = useState(0);
+  const [downloadedMB, setDownloadedMB] = useState(0);
   const [status, setStatus] = useState<"idle" | "pending" | "running" | "completed" | "error">("idle");
   const [downloadLink, setDownloadLink] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
@@ -90,6 +92,7 @@ export default function LeechForm() {
     return () => unsub();
   }, [docId]);
 
+  let lastProgress = progress;
   // Simulated progress for visual feedback
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -140,124 +143,109 @@ export default function LeechForm() {
 
   // --- LEECH FORM ---
   return (
-    <Card className="w-full max-w-xl mx-auto border shadow-lg overflow-hidden relative bg-white">
+    <div className="w-full relative bg-transparent">
       {/* Loading Bar Overlay */}
       {status === 'running' && (
-        <div className="absolute top-0 left-0 w-full h-1 bg-gray-100 overflow-hidden z-10">
-          <div className="h-full bg-primary animate-progress-indeterminate origin-left" style={{ width: `${progress}%` }}/>
+        <div className="absolute -top-6 -left-6 -right-6 h-1 bg-muted overflow-hidden z-10 rounded-t-2xl">
+          <div className="h-full bg-primary transition-all duration-300" style={{ width: `${progress}%` }}/>
         </div>
       )}
-      
-      <CardHeader>
-        <div className="flex items-center justify-between">
-            <div className="space-y-1">
-                <CardTitle className="flex items-center gap-2">
-                    Leech Engine
-                    <span className="text-xs font-normal text-muted-foreground bg-gray-100 px-2 py-0.5 rounded-full border">v1.0</span>
-                </CardTitle>
-                <CardDescription>
-                Paste a direct download link. We'll split & mirror it.
-                </CardDescription>
-            </div>
-            {/* User Avatar Tiny */}
-            <div className="h-8 w-8 rounded-full bg-gray-200 overflow-hidden border border-gray-300" title={user.email || ""}>
-                {user.photoURL ? (
-                    <img src={user.photoURL} alt="User" />
-                ) : (
-                    <div className="w-full h-full flex items-center justify-center text-xs font-bold text-gray-500">
-                        {user.displayName?.charAt(0) || "U"}
-                    </div>
-                )}
-            </div>
+
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+        <div className="relative w-full">
+          <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+              <DownloadCloud className="w-4 h-4 text-muted-foreground" />
+          </div>
+          <Input 
+              placeholder="https://example.com/large-file.zip" 
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              disabled={isSubmitting || status === 'running'}
+              className="h-12 pl-10 border-border/50 bg-muted/20 focus-visible:ring-primary/30 text-base shadow-sm"
+              required
+          />
         </div>
-      </CardHeader>
-
-      <CardContent className="space-y-6">
-        <form onSubmit={handleSubmit} className="flex gap-2">
-          <div className="relative w-full">
-            <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-                <DownloadCloud className="w-4 h-4 text-gray-400" />
-            </div>
-            <Input 
-                placeholder="https://example.com/large-file.zip" 
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                disabled={isSubmitting || status === 'running'}
-                className="h-12 pl-10 border-gray-200 focus-visible:ring-primary/30 text-base"
-                required
-            />
-          </div>
-          <Button 
-            type="submit" 
-            size="icon" 
-            className="h-12 w-12 shrink-0 bg-primary hover:bg-black transition-colors rounded-md shadow-md"
-            disabled={isSubmitting || !url || status === 'running'}
-          >
-            {isSubmitting ? (
+        <Button 
+          type="submit" 
+          className="h-12 w-full shadow-md gap-2"
+          disabled={isSubmitting || !url || status === 'running'}
+        >
+          {isSubmitting ? (
+            <>
               <Loader2 className="w-5 h-5 animate-spin" />
-            ) : (
-              <PlayCircle className="w-5 h-5 fill-current" />
-            )}
-          </Button>
-        </form>
+              Initializing...
+            </>
+          ) : (
+            <>
+              <PlayCircle className="w-5 h-5" />
+              Start Engine
+            </>
+          )}
+        </Button>
+      </form>
 
-        {/* Status & Progress Tracking */}
-        {(status !== 'idle') && (
-          <div className="space-y-3 pt-2 animate-in fade-in slide-in-from-top-2 duration-300">
-            <div className="flex justify-between text-sm font-medium text-gray-700">
-               <span className="flex items-center gap-2">
-                 {status === 'pending' && <Loader2 className="w-3 h-3 animate-spin"/>}
-                 {status === 'pending' && "Initializing job..."}
-                 
-                 {status === 'running' && <Loader2 className="w-3 h-3 animate-spin text-primary"/>}
-                 {status === 'running' && "Mirroring & Splitting..."}
-                 
-                 {status === 'completed' && <span className="text-green-600">Ready for download!</span>}
-                 {status === 'error' && <span className="text-red-600">Failed.</span>}
-               </span>
-               <span className="text-muted-foreground font-mono text-xs">{Math.round(progress)}%</span>
-            </div>
-            
-            <Progress value={progress} className="h-2 bg-gray-100" />
-            
-            {(status === 'running' || status === 'pending') && (
-               <p className="text-xs text-muted-foreground text-center animate-pulse">
-                 This might take a few minutes depending on file size...
-               </p>
-            )}
-
-            {status === 'error' && (
-              <div className="p-3 bg-red-50 text-red-600 text-sm rounded border border-red-100 flex items-center gap-2">
-                 <span>Error: {errorMsg}</span>
-              </div>
-            )}
+      {/* Status & Progress Tracking */}
+      {(status !== 'idle') && (
+        <div className="space-y-4 pt-6 animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="flex justify-between text-sm font-medium">
+             <span className="flex items-center gap-2 text-foreground">
+               {status === 'pending' && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground"/>}
+               {status === 'pending' && "Initializing job..."}
+               
+               {status === 'running' && <Loader2 className="w-3.5 h-3.5 animate-spin text-primary"/>}
+               {status === 'running' && "Mirroring in progress..."}
+               
+               {status === 'completed' && <span className="text-primary font-semibold">Ready for download!</span>}
+               {status === 'error' && <span className="text-destructive font-semibold">Failed</span>}
+             </span>
+             <span className="text-muted-foreground font-mono text-xs">
+               {status === 'running' && (
+                 <span className="mr-2 opacity-75 hidden sm:inline-block">
+                   {downloadedMB.toFixed(1)} MB &bull; {speed} MB/s &bull;
+                 </span>
+               )}
+               {Math.round(progress)}%
+             </span>
           </div>
-        )}
+          
+          <Progress value={progress} className="h-2 bg-muted" />
+          
+          {(status === 'running' || status === 'pending') && (
+             <p className="text-xs text-muted-foreground text-center animate-pulse pt-1">
+               This might take a few minutes depending on file size...
+             </p>
+          )}
 
-        {/* RESULT SECTION */}
-        {status === 'completed' && downloadLink && (
-            <div className="mt-4 pt-4 border-t border-dashed">
-                <div className="bg-green-50/50 border border-green-200 rounded-lg p-3 flex items-center gap-2 justify-between group">
-                    <div className="flex items-center gap-3 overflow-hidden">
-                        <div className="h-8 w-8 bg-green-100 rounded-full flex items-center justify-center shrink-0">
-                            <DownloadCloud className="w-4 h-4 text-green-700" />
-                        </div>
-                        <div className="flex flex-col min-w-0">
-                            <span className="text-xs font-semibold text-green-800 uppercase tracking-wide">Download Ready</span>
-                            <span className="text-xs text-green-700 truncate font-mono opacity-80">{downloadLink}</span>
-                        </div>
-                    </div>
-                    <Button 
-                    size="sm"
-                    className="h-8 bg-green-600 hover:bg-green-700 text-white shrink-0 shadow-sm"
-                    onClick={() => window.open(downloadLink, '_blank')}
-                    >
-                    Open <ExternalLink className="w-3 h-3 ml-1" />
-                    </Button>
-                </div>
+          {status === 'error' && (
+            <div className="p-3 bg-destructive/10 text-destructive text-sm rounded-lg border border-destructive/20 flex items-center gap-2 mt-2">
+               <span>Error: {errorMsg}</span>
             </div>
-        )}
-      </CardContent>
-    </Card>
+          )}
+        </div>
+      )}
+
+      {/* RESULT SECTION */}
+      {status === 'completed' && downloadLink && (
+          <div className="mt-6 pt-6 border-t border-border/50">
+              <div className="bg-primary/5 border border-primary/20 rounded-xl p-4 flex flex-col gap-4">
+                  <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 bg-primary/10 rounded-full flex items-center justify-center shrink-0">
+                          <DownloadCloud className="w-5 h-5 text-primary" />
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                          <span className="text-sm font-bold tracking-tight">Download Ready</span>
+                          <span className="text-xs text-muted-foreground truncate font-mono mt-0.5">{downloadLink}</span>
+                      </div>
+                  </div>
+                  <Button asChild variant="default" className="w-full text-sm shadow-sm gap-2">
+                      <a href={downloadLink} target="_blank" rel="noopener noreferrer">
+                          <ExternalLink className="w-4 h-4" />
+                          Open Link
+                      </a>
+                  </Button>
+              </div>
+          </div>
+      )}
+    </div>
   );
 }
