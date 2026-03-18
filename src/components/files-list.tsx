@@ -95,21 +95,21 @@ export function FilesList() {
   };
 
   return (
-    <div className="w-full">
-      <Table>
+    <div className="w-full overflow-hidden rounded-md border">
+      <Table className="px-4 py-2 sm:px-6">
         <TableHeader className="bg-muted/5 hover:bg-muted/5">
           <TableRow className="border-border/40">
-            <TableHead className="w-[45%] font-semibold">File Info</TableHead>
+            <TableHead className="w-[45%] font-semibold pl-4 sm:pl-6">File Info</TableHead>
             <TableHead className="font-semibold">Status</TableHead>
             <TableHead className="font-semibold">Progress</TableHead>
             <TableHead className="font-semibold hidden md:table-cell">Date</TableHead>
-            <TableHead className="text-right font-semibold">Actions</TableHead>
+            <TableHead className="text-right font-semibold pr-4 sm:pr-6">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {files.map((file) => (
             <TableRow key={file.id} className="group border-border/40 hover:bg-muted/20 transition-colors">
-              <TableCell className="font-medium align-top py-4">
+              <TableCell className="font-medium align-top py-4 pl-4 sm:pl-6">
                 <div className="flex flex-col gap-1.5 pr-4">
                   <div className="flex items-center gap-2">
                     <FileIcon className="h-4 w-4 text-primary/70 shrink-0" />
@@ -145,7 +145,7 @@ export function FilesList() {
                   {file.createdAt ? formatDistanceToNow(file.createdAt, { addSuffix: true }) : "-"}
                 </div>
               </TableCell>
-              <TableCell className="text-right align-top py-4">
+              <TableCell className="text-right align-top py-4 pr-4 sm:pr-6">
                 <div className="flex justify-end pt-0.5 gap-2">
                   {file.status === "completed"   && (
                     <Button size="icon" variant="secondary" className="h-8 w-8 rounded-full bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary transition-colors" asChild>
