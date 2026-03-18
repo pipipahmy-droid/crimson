@@ -82,12 +82,14 @@ export default function LeechForm() {
            setStatus("error");
            setErrorMsg("Mirror failed. Check if link is direct.");
            setIsSubmitting(false);
-        } else {
-           // Still processing
+        } else if (data.status === 'running') {
+           // Started mirroring
            setStatus("running");
            if (typeof data.progress === 'number') setProgress(data.progress);
            if (typeof data.speed === 'number') setSpeed(data.speed);
            if (typeof data.downloadedMB === 'number') setDownloadedMB(data.downloadedMB);
+        } else if (data.status === 'pending') {
+           setStatus("pending");
         }
       }
     });
