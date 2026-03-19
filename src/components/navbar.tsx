@@ -12,31 +12,37 @@ export function Navbar() {
   const pathname = usePathname();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
+  const scrollToSection = (e: React.MouseEvent<HTMLAnchorElement>, id: string) => {
+    if (pathname !== "/") return;
+
+    e.preventDefault();
+    if (id === "top") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } else {
+      const element = document.getElementById(id);
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth" });
+      }
+    }
+  };
+
   if (pathname === "/signup" || pathname === "/login") {
     return null;
   }
 
   return (
     <nav className="fixed top-0 w-full z-50 border-b bg-background/80 backdrop-blur-sm">
-      <div className="container flex h-16 items-center justify-between px-4 md:px-6">
+      <div className="container relative flex h-16 items-center justify-between px-4 md:px-6">
         <Link href="/" className="flex items-center gap-2 font-semibold">
           <span className="text-xl tracking-tighter text-primary">CRIMSON.</span>
         </Link>
         
-        <div className="hidden md:flex gap-6">
-            <Link href="/" className="text-sm font-medium hover:text-primary transition-colors">
+        <div className="hidden md:flex gap-6 absolute left-1/2 -translate-x-1/2">
+            <Link href="/" onClick={(e) => scrollToSection(e, "top")} className="text-sm font-medium hover:text-primary transition-colors">
             Home
             </Link>
-             {user && (
-               <Link href="/dashboard" className="text-sm font-medium hover:text-primary transition-colors">
-                Dashboard
-               </Link>
-             )}
-             <Link href="#" className="text-sm font-medium hover:text-primary transition-colors text-muted-foreground">
+             <Link href="/#features" onClick={(e) => scrollToSection(e, "features")} className="text-sm font-medium hover:text-primary transition-colors text-muted-foreground">
             Features
-            </Link>
-             <Link href="#" className="text-sm font-medium hover:text-primary transition-colors text-muted-foreground">
-            Pricing
             </Link>
         </div>
 

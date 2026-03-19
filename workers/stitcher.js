@@ -93,18 +93,25 @@ export default {
       }
 
       // 2. Stream Stitching Logic
-      // MENGGUNAKAN CELAH CLOUDFLARE: FixedLengthStream
-      // Ini adalah API khusus Cloudflare untuk memaksa stream agar TIDAK menjadi chunked
-      // dan tetap mengirimkan header Content-Length asli ke browser.
-      
       let readable, writable;
-      // Jika runtime mendukung FixedLengthStream (standar baru Worker untuk kasus ini)
+      
+      // Use IdentityTransformStream (TransformStream) as the default base.
+      // If FixedLengthStream is available, we use it to enforce Content-Length.
+      let useFixedLength = false;
+      
       if (typeof FixedLengthStream !== 'undefined' && totalSize > 0) {
-        const stream = new FixedLengthStream(totalSize);
-        readable = stream.readable;
-        writable = stream.writable;
+        try {
+          const stream = new FixedLengthStream(totalSize);
+          readable = stream.readable;
+          writable = stream.writable;
+          useFixedLength = true;
+        } catch (e) {
+          console.warn("FixedLengthStream failed, falling back to TransformStream", e);
+          const transform = new TransformStream();
+          readable = transform.readable;
+          writable = transform.writable;
+        }
       } else {
-        // Fallback jika tidak ada
         const transform = new TransformStream();
         readable = transform.readable;
         writable = transform.writable;
@@ -112,35 +119,64 @@ export default {
       
       // Start processing in the background
       ctx.waitUntil((async () => {
-        const writer = writable.getWriter();
         try {
-          for (const chunkUrl of chunkUrls) {
-            const chunkResponse = await fetch(chunkUrl, {
-              headers: {
+          // Helper for fetching with consistent headers
+          const fetchChunk = (url) => fetch(url, {
+             headers: {
                 "User-Agent": "Crimson-Stitcher/1.0",
-                "Accept-Encoding": "identity",
-              }
-            });
+             }
+          });
+
+          // Start fetching the first chunk immediately
+          let nextChunkPromise = chunkUrls.length > 0 ? fetchChunk(chunkUrls[0]) : null;
+
+          for (let i = 0; i < chunkUrls.length; i++) {
+            const currentChunkUrl = chunkUrls[i];
+            const currentChunkPromise = nextChunkPromise;
+
+            // PRE-FETCH: Start fetching the NEXT chunk while processing the CURRENT one.
+            // This eliminates the "dead time" between chunks (RTT + TTFB).
+            if (i + 1 < chunkUrls.length) {
+              nextChunkPromise = fetchChunk(chunkUrls[i+1]);
+            }
+
+            // Await the response headers of the current chunk
+            const chunkResponse = await currentChunkPromise;
 
             if (!chunkResponse.ok) {
-              console.error(`Failed to fetch chunk: ${chunkUrl} - ${chunkResponse.status}`);
-              throw new Error(`Failed to fetch chunk: ${chunkResponse.status}`);
+              throw new Error(`Failed to fetch chunk: ${currentChunkUrl} - ${chunkResponse.status}`);
             }
 
             if (chunkResponse.body) {
-              await chunkResponse.body.pipeTo(new WritableStream({
-                async write(chunk) {
-                  await writer.write(chunk);
-                }
-              }), { preventClose: true });
+              // Pipe the chunk's body directly to our writable stream.
+              await chunkResponse.body.pipeTo(writable, { preventClose: true });
             }
           }
+          
+          // Once all chunks are piped, we close the writable stream.
+          const writer = writable.getWriter();
           await writer.close();
+          
         } catch (err) {
           console.error("Stream stitching error:", err);
-          await writer.abort(err);
+          // Attempt to abort the stream to signal error to the client
+          try {
+             // If fetching failed, we need to abort the output stream
+             // If the stream is currently locked by pipeTo, this catch block might be reached after pipeTo fails?
+             // If pipeTo fails, it automatically aborts the writable stream unless prevented?
+             // MDN: "If the readable stream errors, the writable stream is aborted" (default behavior).
+             // But if fetch fails before pipeTo, we are here.
+             if (!writable.locked) {
+                 const writer = writable.getWriter();
+                 await writer.abort(err);
+             }
+          } catch (e) {
+             console.error("Error while aborting stream:", e);
+          }
         }
       })());
+
+      // 3. Return response with correct headers
 
       // 3. Return response with correct headers
       const headers = {
@@ -148,7 +184,6 @@ export default {
         "Content-Type": "application/octet-stream",
         "Access-Control-Allow-Origin": "*",
         "Cache-Control": "no-transform", 
-        "Accept-Ranges": "bytes",
       };
 
       if (typeof totalSize === 'number' && !isNaN(totalSize) && totalSize > 0) {

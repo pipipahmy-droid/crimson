@@ -13,4 +13,5 @@ export interface FileItem {
   createdAt: number;
   updatedAt: number;
   md5_hash?: string;
+  sha256_hash?: string;
 }

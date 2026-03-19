@@ -6,6 +6,7 @@ import { MoveRight, DownloadCloud, Zap, Shield, ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
+import { Navbar } from "@/components/navbar";
 
 export default function Home() {
   const { user } = useAuth();
@@ -28,6 +29,8 @@ export default function Home() {
 
   return (
     <div className="flex flex-col min-h-screen">
+      <Navbar />
+  
       {/* Hero Section */}
       <section className="relative w-full py-12 md:py-16 lg:py-24 overflow-hidden">
         {/* Abstract Background Pattern */}

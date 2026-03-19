@@ -94,6 +94,11 @@ jobs:
           echo "MD5: $MD5_HASH"
           echo "md5_hash=$MD5_HASH" >> $GITHUB_OUTPUT
           
+          # Calculate SHA256
+          SHA256_HASH=$(sha256sum download.tmp | awk '{print $1}')
+          echo "SHA256: $SHA256_HASH"
+          echo "sha256_hash=$SHA256_HASH" >> $GITHUB_OUTPUT
+          
           # Split file into 1.9GB chunks
           split -d -b 1900M download.tmp chunk_
           
@@ -126,6 +131,7 @@ jobs:
           FILENAME: ${{ steps.process_file.outputs.filename }}
           TOTAL_SIZE: ${{ steps.process_file.outputs.total_size }}
           MD5_HASH: ${{ steps.process_file.outputs.md5_hash }}
+          SHA256_HASH: ${{ steps.process_file.outputs.sha256_hash }}
           CHUNK_URLS_FILE: 'chunk_urls.txt'
         run: |
           TAG_NAME="${{ steps.create_release.outputs.tag_name }}"

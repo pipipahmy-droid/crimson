@@ -46,6 +46,7 @@ export function FilesList() {
           createdAt: typeof timeVal?.toMillis === 'function' ? timeVal.toMillis() : (timeVal || Date.now()),
           updatedAt: data.updatedAt?.toMillis ? data.updatedAt.toMillis() : (data.updatedAt || Date.now()),
           md5_hash: data.md5_hash,
+          sha256_hash: data.sha256_hash,
         };
       }) as FileItem[];
       
@@ -121,8 +122,13 @@ export function FilesList() {
                     {file.originalUrl}
                   </span>
                   {file.md5_hash && (
-                    <span className="text-[10px] text-muted-foreground/80 font-mono ml-6" title={`MD5: ${file.md5_hash}`}>
-                      <span className="font-semibold mr-1">MD5:</span>{file.md5_hash.substring(0, 8)}...
+                    <span className="text-[10px] text-muted-foreground/80 font-mono ml-6 break-all" title={`MD5: ${file.md5_hash}`}>
+                      <span className="font-semibold mr-1">MD5:</span>{file.md5_hash}
+                    </span>
+                  )}
+                  {file.sha256_hash && (
+                    <span className="text-[10px] text-muted-foreground/80 font-mono ml-6 break-all" title={`SHA256: ${file.sha256_hash}`}>
+                      <span className="font-semibold mr-1">SHA256:</span>{file.sha256_hash}
                     </span>
                   )}
                 </div>
