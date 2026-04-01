@@ -193,39 +193,46 @@ async function main() {
 
   // Check if it's a SourceForge URL
   if (isSourceForge(downloadUrl)) {
-    console.log('SourceForge URL detected — using /download endpoint directly');
+    console.log('SourceForge URL detected — attempting direct mirror download');
     
     try {
-      // SourceForge download endpoint format:
-      // https://sourceforge.net/projects/{name}/files/{path}/download
       const parsedUrl = new URL(downloadUrl);
-      
-      // Extract project name and file path from the URL
-      // Input: downloads.sourceforge.net/project/{name}/{filepath}
-      // Output: sourceforge.net/projects/{name}/files/{filepath}/download
-      
       const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
-      // pathParts = ['project', 'vitor-unofficial-builds', 'AxionAOSP', '4.19', 'file.zip']
+      
+      // Get mirror from params or use default
+      const mirror = parsedUrl.searchParams.get('use_mirror') || 'autoselect';
       
       if (pathParts.length >= 3 && pathParts[0] === 'project') {
         const projectName = pathParts[1];
         const filePath = pathParts.slice(2).join('/');
         
-        // Build the correct SourceForge download URL
-        const downloadEndpoint = `https://sourceforge.net/projects/${projectName}/files/${filePath}/download`;
+        // Try multiple URL patterns in order:
+        // 1. Direct mirror URL (most reliable when mirror works)
+        // 2. SourceForge files download endpoint
+        const urls = [
+          `https://${mirror}.dl.sourceforge.net/project/${projectName}/${filePath}`,
+          `https://sourceforge.net/projects/${projectName}/files/${filePath}/download`
+        ];
         
-        console.log(`Using /download endpoint: ${downloadEndpoint}`);
+        // Try the direct mirror URL first (fastest when it works)
+        for (const url of urls) {
+          console.log(`Trying: ${url}`);
+          const exitCode = await downloadWithCurl(url, db, collectionName, docId);
+          if (exitCode === 0) {
+            process.exit(0);
+          }
+          console.log(`Failed with exit code ${exitCode}, trying next...`);
+        }
         
-        const exitCode = await downloadWithCurl(downloadEndpoint, db, collectionName, docId);
-        process.exit(exitCode);
+        console.error('All SourceForge URL patterns failed');
+        process.exit(1);
       } else {
-        // Fallback: just try the original URL
         console.log('Could not parse SourceForge URL format, trying original');
         const exitCode = await downloadWithCurl(downloadUrl, db, collectionName, docId);
         process.exit(exitCode);
       }
     } catch(error) {
-      console.error(`Failed to construct SourceForge download URL: ${error.message}, falling back to original URL`);
+      console.error(`Failed to construct SourceForge download URL: ${error.message}`);
       const exitCode = await downloadWithCurl(downloadUrl, db, collectionName, docId);
       process.exit(exitCode);
     }
