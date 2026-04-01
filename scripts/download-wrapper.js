@@ -20,19 +20,17 @@ function downloadWithCurl(url, db, collectionName, docId) {
   return new Promise((resolve) => {
     console.log('Downloading with curl -L (redirect-following)...');
     const sourceForgeUrl = new URL(url);
-    // Remove the timestamp and token params that might cause issues
-    const cleanUrl = new URL(sourceForgeUrl.origin + sourceForgeUrl.pathname);
-    cleanUrl.searchParams.set('use_mirror', sourceForgeUrl.searchParams.get('use_mirror')||'autoselect');
+    // Use the new pattern for direct downloads from SourceForge
+    // Construct the URL to go directly to the download endpoint
+    const downloadUrl = `${sourceForgeUrl.origin}${sourceForgeUrl.pathname}/download`;
     
     const curl = spawn('curl', [
-      '-L',                    // follow redirects (critical for SourceForge)
+      '-L',                    // follow redirects (important!)
       '-f',                    // fail on HTTP errors
       '-J',                    // use server-provided filename
-      '-O',                    // write to file (uses -J filename or URL basename)       
-      '--cookie-jar', 'cookies.txt',   // store session cookies if needed
-      '--cookie', 'cookies.txt',       // send stored cookies back
-      '--compressed',          // handle compression (accept-encoding)
-      '--max-redirs', '10',    // SourceForge can have many redirects but cap it
+      '-O',                    // write to file
+      '--compressed',          // handle compression
+      '--max-redirs', '10',    // max redirects
       '-A', USER_AGENT,
       '-H', 'Accept: */*',
       '-H', 'Accept-Language: en-US,en;q=0.9',
@@ -42,11 +40,11 @@ function downloadWithCurl(url, db, collectionName, docId) {
       '-H', 'Sec-Fetch-Dest: document',
       '-H', 'Sec-Fetch-Mode: navigate', 
       '-H', 'Sec-Fetch-Site: none',
-      '-e', sourceForgeUrl.origin,  // referer
-      '--retry', '3',
-      '--retry-delay', '5',
+      '-e', 'https://sourceforge.net/',  // Referer for safety
+      '--retry', '2',
+      '--retry-delay', '3',
       '--progress-bar',
-      cleanUrl.toString()
+      downloadUrl
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let lastUpdate = 0;
