@@ -4,111 +4,82 @@ const fs = require('fs');
 
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
-/**
- * Resolve the final direct download URL.
- * 
- * SourceForge URL pattern:
- *   Input:  https://downloads.sourceforge.net/project/{path}/{file}?use_mirror={mirror}&...
- *   Direct: https://{mirror}.dl.sourceforge.net/project/{path}/{file}
- * 
- * For non-SourceForge URLs, attempts to follow redirects with curl.
- */
-function resolveDirectUrl(url) {
-  const parsed = new URL(url);
-
-  // SourceForge: construct direct mirror URL
-  if (parsed.hostname === 'downloads.sourceforge.net' || parsed.hostname === 'sourceforge.net') {
-    const mirror = parsed.searchParams.get('use_mirror') || 'autoselect';
-    // pathname is like /project/vitor-unofficial-builds/AxionAOSP/4.19/file.zip
-    const projectPath = parsed.pathname;
-    const directUrl = `https://${mirror}.dl.sourceforge.net${projectPath}`;
-    console.log(`SourceForge detected. Direct mirror URL: ${directUrl}`);
-    return directUrl;
-  }
-
-  // For other hosts, try resolving with curl
+function isSourceForge(url) {
   try {
-    console.log('Resolving final download URL via curl...');
-    const result = execSync(
-      `curl -LsI -o /dev/null -w '%{url_effective}' -A "${USER_AGENT}" "${url}"`,
-      { encoding: 'utf8', timeout: 30000 }
-    ).trim();
-    if (result && result.startsWith('http') && result !== url) {
-      console.log(`Resolved to: ${result}`);
-      return result;
-    }
-  } catch (err) {
-    console.warn('Failed to resolve URL with curl, using original:', err.message);
-  }
-  return url;
+    const hostname = new URL(url).hostname;
+    return hostname.includes('sourceforge.net');
+  } catch { return false; }
 }
 
-async function main() {
-  const downloadUrl = process.argv[2];
-  const docId = process.argv[3];
-  
-  if (!downloadUrl || !docId) {
-    console.error("Missing args");
-    process.exit(1);
-  }
+/**
+ * Download using curl (best for SourceForge — handles their redirect chain natively).
+ * curl -L follows 302s through SourceForge's download page to the actual mirror file.
+ * Uses -J to honor Content-Disposition filename from the server.
+ */
+function downloadWithCurl(url, db, collectionName, docId) {
+  return new Promise((resolve) => {
+    console.log('Downloading with curl -L (redirect-following)...');
+    const curl = spawn('curl', [
+      '-L',                    // follow redirects (critical for SourceForge)
+      '-f',                    // fail on HTTP errors
+      '-J',                    // use server-provided filename
+      '-O',                    // write to file (uses -J filename or URL basename)
+      '--retry', '3',
+      '--retry-delay', '5',
+      '--max-redirs', '15',    // SourceForge can have many redirects
+      '-A', USER_AGENT,
+      '--progress-bar',
+      url
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
-  const collectionName = process.env.FIREBASE_COLLECTION_NAME || 'files';
-  let db;
+    let lastUpdate = 0;
 
-  // Initialize Firebase
-  try {
-    let serviceAccount;
-    if (fs.existsSync('service-account.json')) {
-      serviceAccount = JSON.parse(fs.readFileSync('service-account.json', 'utf8'));
-    } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-      serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    }
-    
-    if (serviceAccount) {
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-      });
-      db = admin.firestore();
-    } else {
-      console.warn("No FIREBASE_SERVICE_ACCOUNT found. Progress will not be reported to Firestore.");
-    }
-  } catch (err) {
-    console.error("Failed to init Firebase", err);
-  }
+    curl.stdout.on('data', (data) => process.stdout.write(data));
 
-  // Update status to 'running'
-  if (db) {
-    try {
-      await db.collection(collectionName).doc(docId).set({
-        status: 'running',
-        updatedAt: Date.now()
-      }, { merge: true });
-    } catch(e) { console.error(e); }
-  }
+    curl.stderr.on('data', (data) => {
+      const text = data.toString();
+      process.stderr.write(data);
 
-  // Resolve the final direct URL to avoid redirect issues (SourceForge etc.)
-  const resolvedUrl = resolveDirectUrl(downloadUrl);
+      // Parse curl progress bar: e.g. "  45.2% ..." or "###...  100.0%"
+      if (db) {
+        const pctMatch = text.match(/(\d+\.\d+)%/);
+        if (pctMatch) {
+          const progress = Math.round(parseFloat(pctMatch[1]));
+          const now = Date.now();
+          if (now - lastUpdate > 2000) {
+            lastUpdate = now;
+            db.collection(collectionName).doc(docId).set({
+              progress,
+              updatedAt: Date.now()
+            }, { merge: true }).catch(() => {});
+          }
+        }
+      }
+    });
 
-  // Determine if we should limit connections (some mirrors reject multi-connection)
-  const isSourceForge = downloadUrl.includes('sourceforge.net');
-  const connections = isSourceForge ? '1' : '16';
+    curl.on('close', (code) => {
+      console.log(`curl exited with code ${code}`);
+      resolve(code);
+    });
+  });
+}
 
-  // Run aria2c with the resolved URL  
-  const args = [
-    `-x${connections}`, `-s${connections}`, '-k1M',
-    '--check-certificate=false',
-    '--summary-interval=2',
-    '--max-tries=3',
-    '--retry-wait=3',
-    '--follow-torrent=false',
-    `--user-agent=${USER_AGENT}`,
-    `--referer=${new URL(downloadUrl).origin}`,
-    resolvedUrl
-  ];
+/**
+ * Download using aria2c (best for non-SourceForge URLs — multi-connection speed).
+ */
+function downloadWithAria2c(url, db, collectionName, docId) {
+  return new Promise((resolve) => {
+    const args = [
+      '-x16', '-s16', '-k1M',
+      '--check-certificate=false',
+      '--summary-interval=2',
+      '--max-tries=3',
+      '--retry-wait=3',
+      `--user-agent=${USER_AGENT}`,
+      url
+    ];
 
-  console.log(`Starting aria2c with ${connections} connection(s)...`);
-
-  const exitCode = await new Promise((resolve) => {
+    console.log('Downloading with aria2c (multi-connection)...');
     const child = spawn('aria2c', args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let lastUpdate = 0;
@@ -129,17 +100,17 @@ async function main() {
         if (match && db) {
           let dlUnit = match[2];
           let downloadedMB = parseFloat(match[1]);
-          if (dlUnit === 'KiB') downloadedMB = downloadedMB / 1024;
-          else if (dlUnit === 'GiB') downloadedMB = downloadedMB * 1024;
-          else if (dlUnit === 'B') downloadedMB = downloadedMB / (1024 * 1024);
+          if (dlUnit === 'KiB') downloadedMB /= 1024;
+          else if (dlUnit === 'GiB') downloadedMB *= 1024;
+          else if (dlUnit === 'B') downloadedMB /= (1024 * 1024);
 
           const progress = parseInt(match[5], 10);
 
           let spUnit = match[7];
           let speed = parseFloat(match[6]);
-          if (spUnit === 'KiB') speed = speed / 1024;
-          else if (spUnit === 'GiB') speed = speed * 1024;
-          else if (spUnit === 'B') speed = speed / (1024 * 1024);
+          if (spUnit === 'KiB') speed /= 1024;
+          else if (spUnit === 'GiB') speed *= 1024;
+          else if (spUnit === 'B') speed /= (1024 * 1024);
 
           downloadedMB = Math.round(downloadedMB * 10) / 10;
           speed = Math.round(speed * 10) / 10;
@@ -148,61 +119,86 @@ async function main() {
           if (now - lastUpdate > 1000) {
             lastUpdate = now;
             db.collection(collectionName).doc(docId).set({
-              progress,
-              speed,
-              downloadedMB,
+              progress, speed, downloadedMB,
               updatedAt: Date.now()
-            }, { merge: true }).catch(()=>{});
+            }, { merge: true }).catch(() => {});
           }
         }
       }
     });
 
-    child.stderr.on('data', (data) => {
-      process.stderr.write(data);
-    });
+    child.stderr.on('data', (data) => process.stderr.write(data));
 
     child.on('close', (code) => {
       console.log(`aria2c exited with code ${code}`);
       resolve(code);
     });
   });
+}
 
-  // Fallback to curl if aria2c failed
-  if (exitCode !== 0) {
-    console.log('aria2c failed, falling back to curl...');
-    
-    if (db) {
-      await db.collection(collectionName).doc(docId).set({
-        status: 'running',
-        statusText: 'Retrying with curl...',
-        updatedAt: Date.now()
-      }, { merge: true }).catch(()=>{});
-    }
+async function main() {
+  const downloadUrl = process.argv[2];
+  const docId = process.argv[3];
 
-    const curlCode = await new Promise((resolve) => {
-      const curl = spawn('curl', [
-        '-L', '-f', '-o', 'download_file',
-        '--retry', '3',
-        '--retry-delay', '5',
-        '-A', USER_AGENT,
-        '-e', new URL(downloadUrl).origin,
-        '--progress-bar',
-        downloadUrl  // use original URL — curl handles redirects natively
-      ], { stdio: ['ignore', 'pipe', 'pipe'] });
-
-      curl.stdout.on('data', (data) => process.stdout.write(data));
-      curl.stderr.on('data', (data) => process.stderr.write(data));
-      curl.on('close', (code) => {
-        console.log(`curl exited with code ${code}`);
-        resolve(code);
-      });
-    });
-
-    process.exit(curlCode);
+  if (!downloadUrl || !docId) {
+    console.error("Missing args: <url> <doc_id>");
+    process.exit(1);
   }
 
-  process.exit(0);
+  const collectionName = process.env.FIREBASE_COLLECTION_NAME || 'files';
+  let db;
+
+  // Initialize Firebase
+  try {
+    let serviceAccount;
+    if (fs.existsSync('service-account.json')) {
+      serviceAccount = JSON.parse(fs.readFileSync('service-account.json', 'utf8'));
+    } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+      serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    }
+
+    if (serviceAccount) {
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+      db = admin.firestore();
+    } else {
+      console.warn("No FIREBASE_SERVICE_ACCOUNT found. Progress will not be reported.");
+    }
+  } catch (err) {
+    console.error("Failed to init Firebase", err);
+  }
+
+  // Update status
+  if (db) {
+    try {
+      await db.collection(collectionName).doc(docId).set({
+        status: 'running', updatedAt: Date.now()
+      }, { merge: true });
+    } catch (e) { console.error(e); }
+  }
+
+  // Choose downloader based on URL
+  // SourceForge requires curl because aria2c can't handle their redirect chain
+  // (mirrors redirect back to the HTML download page instead of serving the file)
+  let exitCode;
+  if (isSourceForge(downloadUrl)) {
+    console.log('SourceForge URL detected — using curl (aria2c cannot handle SF redirects)');
+    exitCode = await downloadWithCurl(downloadUrl, db, collectionName, docId);
+  } else {
+    exitCode = await downloadWithAria2c(downloadUrl, db, collectionName, docId);
+
+    // Fallback to curl if aria2c failed
+    if (exitCode !== 0) {
+      console.log('aria2c failed, falling back to curl...');
+      if (db) {
+        await db.collection(collectionName).doc(docId).set({
+          statusText: 'Retrying with curl...', updatedAt: Date.now()
+        }, { merge: true }).catch(() => {});
+      }
+      exitCode = await downloadWithCurl(downloadUrl, db, collectionName, docId);
+    }
+  }
+
+  process.exit(exitCode);
 }
 
 main();
