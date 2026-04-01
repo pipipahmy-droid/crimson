@@ -19,22 +19,34 @@ function isSourceForge(url) {
 function downloadWithCurl(url, db, collectionName, docId) {
   return new Promise((resolve) => {
     console.log('Downloading with curl -L (redirect-following)...');
+    const sourceForgeUrl = new URL(url);
+    // Remove the timestamp and token params that might cause issues
+    const cleanUrl = new URL(sourceForgeUrl.origin + sourceForgeUrl.pathname);
+    cleanUrl.searchParams.set('use_mirror', sourceForgeUrl.searchParams.get('use_mirror')||'autoselect');
+    
     const curl = spawn('curl', [
       '-L',                    // follow redirects (critical for SourceForge)
       '-f',                    // fail on HTTP errors
       '-J',                    // use server-provided filename
-      '-O',                    // write to file (uses -J filename or URL basename)
+      '-O',                    // write to file (uses -J filename or URL basename)       
+      '--cookie-jar', 'cookies.txt',   // store session cookies if needed
+      '--cookie', 'cookies.txt',       // send stored cookies back
       '--compressed',          // handle compression (accept-encoding)
       '--max-redirs', '10',    // SourceForge can have many redirects but cap it
       '-A', USER_AGENT,
       '-H', 'Accept: */*',
+      '-H', 'Accept-Language: en-US,en;q=0.9',
       '-H', 'Accept-Encoding: gzip, deflate, br',
       '-H', 'Connection: keep-alive',
-      '-e', new URL(url).origin,  // referer
+      '-H', 'Upgrade-Insecure-Requests: 1',
+      '-H', 'Sec-Fetch-Dest: document',
+      '-H', 'Sec-Fetch-Mode: navigate', 
+      '-H', 'Sec-Fetch-Site: none',
+      '-e', sourceForgeUrl.origin,  // referer
       '--retry', '3',
       '--retry-delay', '5',
       '--progress-bar',
-      url
+      cleanUrl.toString()
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let lastUpdate = 0;
