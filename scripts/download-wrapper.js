@@ -196,26 +196,34 @@ async function main() {
     console.log('SourceForge URL detected — using /download endpoint directly');
     
     try {
+      // SourceForge download endpoint format:
+      // https://sourceforge.net/projects/{name}/files/{path}/download
       const parsedUrl = new URL(downloadUrl);
       
-      // Convert the URL to the direct download endpoint
-      const sfNetUrl = downloadUrl.replace('downloads.sourceforge.net', 'sourceforge.net')
-                                  .replace('?ts=', '/download?ts=')
-                                  .split('#')[0];
+      // Extract project name and file path from the URL
+      // Input: downloads.sourceforge.net/project/{name}/{filepath}
+      // Output: sourceforge.net/projects/{name}/files/{filepath}/download
       
-      // If it doesn't already have '/download' in the path, add it
-      let downloadEndpoint = sfNetUrl;
-      if (!sfNetUrl.includes('/download') && !sfNetUrl.endsWith('/download')) {
-        const baseUrl = sfNetUrl.split('?')[0];
-        const queryParams = sfNetUrl.includes('?') ? sfNetUrl.split('?')[1] : '';
-        downloadEndpoint = queryParams ? `${baseUrl}/download?${queryParams}` : `${baseUrl}/download`;
+      const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
+      // pathParts = ['project', 'vitor-unofficial-builds', 'AxionAOSP', '4.19', 'file.zip']
+      
+      if (pathParts.length >= 3 && pathParts[0] === 'project') {
+        const projectName = pathParts[1];
+        const filePath = pathParts.slice(2).join('/');
+        
+        // Build the correct SourceForge download URL
+        const downloadEndpoint = `https://sourceforge.net/projects/${projectName}/files/${filePath}/download`;
+        
+        console.log(`Using /download endpoint: ${downloadEndpoint}`);
+        
+        const exitCode = await downloadWithCurl(downloadEndpoint, db, collectionName, docId);
+        process.exit(exitCode);
+      } else {
+        // Fallback: just try the original URL
+        console.log('Could not parse SourceForge URL format, trying original');
+        const exitCode = await downloadWithCurl(downloadUrl, db, collectionName, docId);
+        process.exit(exitCode);
       }
-      
-      console.log(`Using /download endpoint: ${downloadEndpoint}`);
-      
-      // Now use curl with the download endpoint
-      const exitCode = await downloadWithCurl(downloadEndpoint, db, collectionName, docId);
-      process.exit(exitCode);
     } catch(error) {
       console.error(`Failed to construct SourceForge download URL: ${error.message}, falling back to original URL`);
       const exitCode = await downloadWithCurl(downloadUrl, db, collectionName, docId);
