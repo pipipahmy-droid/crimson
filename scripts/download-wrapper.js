@@ -193,33 +193,31 @@ async function main() {
 
   // Check if it's a SourceForge URL
   if (isSourceForge(downloadUrl)) {
-    console.log('SourceForge URL detected — converting to direct mirror URL');
+    console.log('SourceForge URL detected — using /download endpoint directly');
     
     try {
       const parsedUrl = new URL(downloadUrl);
-      const pathname = parsedUrl.pathname; // e.g., /project/foo/bar.zip
       
-      // Get the mirror from the query param, default to autoselect
-      const mirror = parsedUrl.searchParams.get('use_mirror') || 'autoselect';
+      // Convert the URL to the direct download endpoint
+      const sfNetUrl = downloadUrl.replace('downloads.sourceforge.net', 'sourceforge.net')
+                                  .replace('?ts=', '/download?ts=')
+                                  .split('#')[0];
       
-      // Construct the direct mirror URL
-      let mirrorUrl;
-      if(mirror.toLowerCase() === 'autoselect') {
-        // Use any working mirror (try the first alternative)
-        // Often fastest is the US one so we'll try that
-        mirrorUrl = `https://newcontinuum.dl.sourceforge.net${pathname}`;
-      } else {
-        mirrorUrl = `https://${mirror}.dl.sourceforge.net${pathname}`;
+      // If it doesn't already have '/download' in the path, add it
+      let downloadEndpoint = sfNetUrl;
+      if (!sfNetUrl.includes('/download') && !sfNetUrl.endsWith('/download')) {
+        const baseUrl = sfNetUrl.split('?')[0];
+        const queryParams = sfNetUrl.includes('?') ? sfNetUrl.split('?')[1] : '';
+        downloadEndpoint = queryParams ? `${baseUrl}/download?${queryParams}` : `${baseUrl}/download`;
       }
       
-      console.log(`Using direct mirror URL: ${mirrorUrl}`);
+      console.log(`Using /download endpoint: ${downloadEndpoint}`);
       
-      // Now use curl with the constructed mirror URL
-      const exitCode = await downloadWithCurl(mirrorUrl, db, collectionName, docId);
+      // Now use curl with the download endpoint
+      const exitCode = await downloadWithCurl(downloadEndpoint, db, collectionName, docId);
       process.exit(exitCode);
     } catch(error) {
-      console.error(`Failed to construct SourceForge mirror URL: ${error.message}, falling back to original URL`);
-      // Fallback to original URL handling  
+      console.error(`Failed to construct SourceForge download URL: ${error.message}, falling back to original URL`);
       const exitCode = await downloadWithCurl(downloadUrl, db, collectionName, docId);
       process.exit(exitCode);
     }
