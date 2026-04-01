@@ -5,18 +5,35 @@ const fs = require('fs');
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 /**
- * Resolve the final direct URL by following redirects with curl.
- * This is critical for SourceForge and similar hosts that use
- * a chain of 302 redirects with temporary tokens.
+ * Resolve the final direct download URL.
+ * 
+ * SourceForge URL pattern:
+ *   Input:  https://downloads.sourceforge.net/project/{path}/{file}?use_mirror={mirror}&...
+ *   Direct: https://{mirror}.dl.sourceforge.net/project/{path}/{file}
+ * 
+ * For non-SourceForge URLs, attempts to follow redirects with curl.
  */
 function resolveDirectUrl(url) {
+  const parsed = new URL(url);
+
+  // SourceForge: construct direct mirror URL
+  if (parsed.hostname === 'downloads.sourceforge.net' || parsed.hostname === 'sourceforge.net') {
+    const mirror = parsed.searchParams.get('use_mirror') || 'autoselect';
+    // pathname is like /project/vitor-unofficial-builds/AxionAOSP/4.19/file.zip
+    const projectPath = parsed.pathname;
+    const directUrl = `https://${mirror}.dl.sourceforge.net${projectPath}`;
+    console.log(`SourceForge detected. Direct mirror URL: ${directUrl}`);
+    return directUrl;
+  }
+
+  // For other hosts, try resolving with curl
   try {
     console.log('Resolving final download URL via curl...');
     const result = execSync(
       `curl -LsI -o /dev/null -w '%{url_effective}' -A "${USER_AGENT}" "${url}"`,
       { encoding: 'utf8', timeout: 30000 }
     ).trim();
-    if (result && result.startsWith('http')) {
+    if (result && result.startsWith('http') && result !== url) {
       console.log(`Resolved to: ${result}`);
       return result;
     }

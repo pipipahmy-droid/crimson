@@ -17,9 +17,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-          cache: 'npm'
+
+      - name: Cache node_modules
+        id: cache-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: nm-${{ hashFiles('package-lock.json') }}
 
       - name: Install Dependencies
+        if: steps.cache-modules.outputs.cache-hit != 'true'
         run: npm ci --no-audit --no-fund --loglevel=error
 
       - name: Download & Split File
