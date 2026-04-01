@@ -2,7 +2,7 @@ const { spawn, execSync } = require('child_process');
 const admin = require('firebase-admin');
 const fs = require('fs');
 
-const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const USER_AGENT = 'Wget/1.21';
 
 function isSourceForge(url) {
   try {
@@ -12,39 +12,21 @@ function isSourceForge(url) {
 }
 
 /**
- * Download using curl (best for SourceForge — handles their redirect chain natively).
- * curl -L follows 302s through SourceForge's download page to the actual mirror file.
- * Uses -J to honor Content-Disposition filename from the server.
+ * Download using curl. For SourceForge, we try multiple URL patterns.
  */
 function downloadWithCurl(url, db, collectionName, docId) {
   return new Promise((resolve) => {
-    console.log('Downloading with curl -L (redirect-following)...');
-    const sourceForgeUrl = new URL(url);
-    // Use the new pattern for direct downloads from SourceForge
-    // Construct the URL to go directly to the download endpoint
-    const downloadUrl = `${sourceForgeUrl.origin}${sourceForgeUrl.pathname}/download`;
+    console.log(`Downloading: ${url}`);
     
     const curl = spawn('curl', [
-      '-L',                    // follow redirects (important!)
-      '-f',                    // fail on HTTP errors
-      '-J',                    // use server-provided filename
-      '-O',                    // write to file
-      '--compressed',          // handle compression
-      '--max-redirs', '10',    // max redirects
+      '-L', '-f', '-O', '--compressed',
+      '--max-redirs', '10',
       '-A', USER_AGENT,
       '-H', 'Accept: */*',
-      '-H', 'Accept-Language: en-US,en;q=0.9',
-      '-H', 'Accept-Encoding: gzip, deflate, br',
-      '-H', 'Connection: keep-alive',
-      '-H', 'Upgrade-Insecure-Requests: 1',
-      '-H', 'Sec-Fetch-Dest: document',
-      '-H', 'Sec-Fetch-Mode: navigate', 
-      '-H', 'Sec-Fetch-Site: none',
-      '-e', 'https://sourceforge.net/',  // Referer for safety
-      '--retry', '2',
-      '--retry-delay', '3',
+      '-e', 'https://sourceforge.net/',
+      '--retry', '2', '--retry-delay', '3',
       '--progress-bar',
-      downloadUrl
+      url
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let lastUpdate = 0;
@@ -52,59 +34,65 @@ function downloadWithCurl(url, db, collectionName, docId) {
     curl.stdout.on('data', (data) => process.stdout.write(data));
 
     curl.stderr.on('data', (data) => {
-      const text = data.toString();
       process.stderr.write(data);
-
-      // Parse curl progress bar: e.g. "  45.2% ..." or "###...  100.0%"
       if (db) {
-        const pctMatch = text.match(/(\d+\.\d+)%/);
-        if (pctMatch) {
-          const progress = Math.round(parseFloat(pctMatch[1]));
+        const match = data.toString().match(/(\d+\.\d+)%/);
+        if (match) {
           const now = Date.now();
           if (now - lastUpdate > 2000) {
             lastUpdate = now;
             db.collection(collectionName).doc(docId).set({
-              progress,
-              updatedAt: Date.now()
+              progress: Math.round(parseFloat(match[1])),
+              updatedAt: now
             }, { merge: true }).catch(() => {});
           }
         }
       }
     });
 
-    curl.on('close', (code) => {
+    curl.on('close', async (code) => {
       console.log(`curl exited with code ${code}`);
+      
+      // Verify we didn't download an HTML page
+      if (code === 0) {
+        try {
+          const downloadedFile = url.split('/').pop().split('?')[0] || 'download';
+          if (fs.existsSync(downloadedFile)) {
+            const content = fs.readFileSync(downloadedFile, { encoding: 'utf8', flag: 'r' });
+            const preview = content.substring(0, 500).toLowerCase();
+            if (preview.startsWith('<!doctype') || preview.includes('<html')) {
+              console.log('Got HTML instead of binary, returning error code 23');
+              fs.unlinkSync(downloadedFile); // Delete HTML file
+              resolve(23); // Custom code for HTML content
+              return;
+            }
+          }
+        } catch (err) {
+          console.warn('Content check failed:', err.message);
+        }
+      }
+      
       resolve(code);
     });
   });
 }
 
 /**
- * Download using aria2c (best for non-SourceForge URLs — multi-connection speed).
+ * Download using aria2c (for non-SourceForge URLs).
  */
 function downloadWithAria2c(url, db, collectionName, docId) {
   return new Promise((resolve) => {
-    const args = [
-      '-x16', '-s16', '-k1M',
-      '--check-certificate=false',
-      '--summary-interval=2',
-      '--max-tries=3',
-      '--retry-wait=3',
-      `--user-agent=${USER_AGENT}`,
-      url
-    ];
+    const args = ['-x16', '-s16', '-k1M', '--check-certificate=false', '--summary-interval=2', '--max-tries=3', '--retry-wait=3', `--user-agent=${USER_AGENT}`, url];
 
-    console.log('Downloading with aria2c (multi-connection)...');
+    console.log('Downloading with aria2c...');
     const child = spawn('aria2c', args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let lastUpdate = 0;
     let buffer = '';
 
     child.stdout.on('data', async (data) => {
-      const rawText = data.toString();
-      process.stdout.write(rawText);
-
-      buffer += rawText;
+      process.stdout.write(data);
+      buffer += data.toString();
       buffer = buffer.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
 
       const lines = buffer.split(/[\r\n]+/);
@@ -127,15 +115,12 @@ function downloadWithAria2c(url, db, collectionName, docId) {
           else if (spUnit === 'GiB') speed *= 1024;
           else if (spUnit === 'B') speed /= (1024 * 1024);
 
-          downloadedMB = Math.round(downloadedMB * 10) / 10;
-          speed = Math.round(speed * 10) / 10;
-
           const now = Date.now();
           if (now - lastUpdate > 1000) {
             lastUpdate = now;
             db.collection(collectionName).doc(docId).set({
-              progress, speed, downloadedMB,
-              updatedAt: Date.now()
+              progress, speed, downloadedMB: Math.round(downloadedMB * 10) / 10,
+              updatedAt: now
             }, { merge: true }).catch(() => {});
           }
         }
@@ -193,38 +178,34 @@ async function main() {
 
   // Check if it's a SourceForge URL
   if (isSourceForge(downloadUrl)) {
-    console.log('SourceForge URL detected — attempting direct mirror download');
-    
+    console.log('SourceForge URL detected — trying multiple download methods');
+
     try {
       const parsedUrl = new URL(downloadUrl);
       const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
-      
-      // Get mirror from params or use default
-      const mirror = parsedUrl.searchParams.get('use_mirror') || 'autoselect';
-      
+      const mirror = parsedUrl.searchParams.get('use_mirror') || 'downloads';
+
       if (pathParts.length >= 3 && pathParts[0] === 'project') {
         const projectName = pathParts[1];
         const filePath = pathParts.slice(2).join('/');
-        
-        // Try multiple URL patterns in order:
-        // 1. Direct mirror URL (most reliable when mirror works)
-        // 2. SourceForge files download endpoint
+
+        // Try multiple URL patterns
         const urls = [
           `https://${mirror}.dl.sourceforge.net/project/${projectName}/${filePath}`,
+          `https://downloads.sourceforge.net/project/${projectName}/${filePath}`,
           `https://sourceforge.net/projects/${projectName}/files/${filePath}/download`
         ];
-        
-        // Try the direct mirror URL first (fastest when it works)
+
         for (const url of urls) {
-          console.log(`Trying: ${url}`);
+          console.log(`Attempting: ${url}`);
           const exitCode = await downloadWithCurl(url, db, collectionName, docId);
           if (exitCode === 0) {
             process.exit(0);
           }
-          console.log(`Failed with exit code ${exitCode}, trying next...`);
+          console.log(`Failed (exit ${exitCode}), trying next URL...`);
         }
-        
-        console.error('All SourceForge URL patterns failed');
+
+        console.error('All SourceForge download methods failed');
         process.exit(1);
       } else {
         console.log('Could not parse SourceForge URL format, trying original');
@@ -240,7 +221,6 @@ async function main() {
     // Non-SourceForge: use aria2c with fallback to curl
     const exitCode = await downloadWithAria2c(downloadUrl, db, collectionName, docId);
 
-    // Fallback to curl if aria2c failed
     if (exitCode !== 0) {
       console.log('aria2c failed, falling back to curl...');
       if (db) {
