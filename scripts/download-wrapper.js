@@ -193,15 +193,41 @@ async function main() {
     } catch (e) { console.error(e); }
   }
 
-  // Choose downloader based on URL
-  // SourceForge requires curl because aria2c can't handle their redirect chain
-  // (mirrors redirect back to the HTML download page instead of serving the file)
-  let exitCode;
+  // Check if it's a SourceForge URL
   if (isSourceForge(downloadUrl)) {
-    console.log('SourceForge URL detected — using curl (aria2c cannot handle SF redirects)');
-    exitCode = await downloadWithCurl(downloadUrl, db, collectionName, docId);
+    console.log('SourceForge URL detected — converting to direct mirror URL');
+    
+    try {
+      const parsedUrl = new URL(downloadUrl);
+      const pathname = parsedUrl.pathname; // e.g., /project/foo/bar.zip
+      
+      // Get the mirror from the query param, default to autoselect
+      const mirror = parsedUrl.searchParams.get('use_mirror') || 'autoselect';
+      
+      // Construct the direct mirror URL
+      let mirrorUrl;
+      if(mirror.toLowerCase() === 'autoselect') {
+        // Use any working mirror (try the first alternative)
+        // Often fastest is the US one so we'll try that
+        mirrorUrl = `https://newcontinuum.dl.sourceforge.net${pathname}`;
+      } else {
+        mirrorUrl = `https://${mirror}.dl.sourceforge.net${pathname}`;
+      }
+      
+      console.log(`Using direct mirror URL: ${mirrorUrl}`);
+      
+      // Now use curl with the constructed mirror URL
+      const exitCode = await downloadWithCurl(mirrorUrl, db, collectionName, docId);
+      process.exit(exitCode);
+    } catch(error) {
+      console.error(`Failed to construct SourceForge mirror URL: ${error.message}, falling back to original URL`);
+      // Fallback to original URL handling  
+      const exitCode = await downloadWithCurl(downloadUrl, db, collectionName, docId);
+      process.exit(exitCode);
+    }
   } else {
-    exitCode = await downloadWithAria2c(downloadUrl, db, collectionName, docId);
+    // Non-SourceForge: use aria2c with fallback to curl
+    const exitCode = await downloadWithAria2c(downloadUrl, db, collectionName, docId);
 
     // Fallback to curl if aria2c failed
     if (exitCode !== 0) {
@@ -211,11 +237,12 @@ async function main() {
           statusText: 'Retrying with curl...', updatedAt: Date.now()
         }, { merge: true }).catch(() => {});
       }
-      exitCode = await downloadWithCurl(downloadUrl, db, collectionName, docId);
+      const exitCode = await downloadWithCurl(downloadUrl, db, collectionName, docId);
+      process.exit(exitCode);
     }
   }
 
-  process.exit(exitCode);
+  process.exit(0);
 }
 
 main();
