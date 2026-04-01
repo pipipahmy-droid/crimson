@@ -24,10 +24,15 @@ function downloadWithCurl(url, db, collectionName, docId) {
       '-f',                    // fail on HTTP errors
       '-J',                    // use server-provided filename
       '-O',                    // write to file (uses -J filename or URL basename)
+      '--compressed',          // handle compression (accept-encoding)
+      '--max-redirs', '10',    // SourceForge can have many redirects but cap it
+      '-A', USER_AGENT,
+      '-H', 'Accept: */*',
+      '-H', 'Accept-Encoding: gzip, deflate, br',
+      '-H', 'Connection: keep-alive',
+      '-e', new URL(url).origin,  // referer
       '--retry', '3',
       '--retry-delay', '5',
-      '--max-redirs', '15',    // SourceForge can have many redirects
-      '-A', USER_AGENT,
       '--progress-bar',
       url
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
